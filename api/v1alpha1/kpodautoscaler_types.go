@@ -74,23 +74,23 @@ type MetricConfig struct {
 
 	// ScaleUpRate is the maximum scale up rate
 	// +optional
-	ScaleUpRate *float64 `json:"scaleUpRate,omitempty"`
+	ScaleUpRate *resource.Quantity `json:"scaleUpRate,omitempty"`
 
 	// ScaleDownRate is the maximum scale down rate
 	// +optional
-	ScaleDownRate *float64 `json:"scaleDownRate,omitempty"`
+	ScaleDownRate *resource.Quantity `json:"scaleDownRate,omitempty"`
 
 	// MaxScaleUpRate is the maximum scale up rate
 	// +optional
-	MaxScaleUpRate *float64 `json:"maxScaleUpRate,omitempty"`
+	MaxScaleUpRate *resource.Quantity `json:"maxScaleUpRate,omitempty"`
 
 	// MaxScaleDownRate is the maximum scale down rate
 	// +optional
-	MaxScaleDownRate *float64 `json:"maxScaleDownRate,omitempty"`
+	MaxScaleDownRate *resource.Quantity `json:"maxScaleDownRate,omitempty"`
 
 	// PanicThreshold is the threshold for entering panic mode
 	// +optional
-	PanicThreshold *float64 `json:"panicThreshold,omitempty"`
+	PanicThreshold *resource.Quantity `json:"panicThreshold,omitempty"`
 
 	// StableWindow is the window size for stable metrics
 	// +optional
@@ -102,7 +102,7 @@ type MetricConfig struct {
 
 	// TargetUtilization is the target utilization percentage
 	// +optional
-	TargetUtilization *float64 `json:"targetUtilization,omitempty"`
+	TargetUtilization *resource.Quantity `json:"targetUtilization,omitempty"`
 }
 
 // MetricTarget defines the target value, average value, or average utilization of a specific metric

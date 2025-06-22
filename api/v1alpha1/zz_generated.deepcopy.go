@@ -265,28 +265,28 @@ func (in *MetricConfig) DeepCopyInto(out *MetricConfig) {
 	}
 	if in.ScaleUpRate != nil {
 		in, out := &in.ScaleUpRate, &out.ScaleUpRate
-		*out = new(float64)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.ScaleDownRate != nil {
 		in, out := &in.ScaleDownRate, &out.ScaleDownRate
-		*out = new(float64)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.MaxScaleUpRate != nil {
 		in, out := &in.MaxScaleUpRate, &out.MaxScaleUpRate
-		*out = new(float64)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.MaxScaleDownRate != nil {
 		in, out := &in.MaxScaleDownRate, &out.MaxScaleDownRate
-		*out = new(float64)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.PanicThreshold != nil {
 		in, out := &in.PanicThreshold, &out.PanicThreshold
-		*out = new(float64)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 	if in.StableWindow != nil {
 		in, out := &in.StableWindow, &out.StableWindow
@@ -300,8 +300,8 @@ func (in *MetricConfig) DeepCopyInto(out *MetricConfig) {
 	}
 	if in.TargetUtilization != nil {
 		in, out := &in.TargetUtilization, &out.TargetUtilization
-		*out = new(float64)
-		**out = **in
+		x := (*in).DeepCopy()
+		*out = &x
 	}
 }
 

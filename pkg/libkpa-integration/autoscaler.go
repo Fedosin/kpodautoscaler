@@ -147,26 +147,26 @@ func GetAutoscalerConfig(metricConfig *v1alpha1.MetricConfig) api.AutoscalerConf
 
 	// Scaling rates
 	if metricConfig.ScaleUpRate != nil {
-		cfg.MaxScaleUpRate = *metricConfig.ScaleUpRate
+		cfg.MaxScaleUpRate = metricConfig.ScaleUpRate.AsApproximateFloat64()
 	}
 	if metricConfig.ScaleDownRate != nil {
-		cfg.MaxScaleDownRate = *metricConfig.ScaleDownRate
+		cfg.MaxScaleDownRate = metricConfig.ScaleDownRate.AsApproximateFloat64()
 	}
 	if metricConfig.MaxScaleUpRate != nil {
-		cfg.MaxScaleUpRate = *metricConfig.MaxScaleUpRate
+		cfg.MaxScaleUpRate = metricConfig.MaxScaleUpRate.AsApproximateFloat64()
 	}
 	if metricConfig.MaxScaleDownRate != nil {
-		cfg.MaxScaleDownRate = *metricConfig.MaxScaleDownRate
+		cfg.MaxScaleDownRate = metricConfig.MaxScaleDownRate.AsApproximateFloat64()
 	}
 
 	// Panic configuration
 	if metricConfig.PanicThreshold != nil {
-		cfg.PanicThreshold = *metricConfig.PanicThreshold
+		cfg.PanicThreshold = metricConfig.PanicThreshold.AsApproximateFloat64()
 	}
 
 	// Target utilization
 	if metricConfig.TargetUtilization != nil {
-		cfg.TargetValue = *metricConfig.TargetUtilization
+		cfg.TargetValue = metricConfig.TargetUtilization.AsApproximateFloat64()
 	}
 
 	// Initial scale - use ActivationScale for scaling from zero
