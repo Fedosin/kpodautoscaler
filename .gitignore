@@ -1,0 +1,113 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build artifacts
+bin/
+*.test
+*.out
+
+# Go module and dependency management
+vendor/
+go.sum.backup
+
+# Test coverage
+coverage.txt
+coverage.html
+*.cover
+*.coverprofile
+
+# Kubernetes generated files
+config/crd/bases
+config/rbac/role.yaml
+config/rbac/role_binding.yaml
+config/manager/controller_manager_config.yaml
+config/webhook
+config/certmanager
+manifests/
+
+# Controller-runtime artifacts
+testbin/
+hack/tools/bin/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+
+# IDE specific files
+# VSCode
+.vscode/
+*.code-workspace
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# GoLand
+.goland/
+
+# Vim
+*.vim
+.vim/
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# OS specific files
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+.directory
+.Trash-*
+
+# Project specific
+/kpodautoscaler
+/manager
+*.log
+*.pid
+
+# Kubernetes artifacts
+kubeconfig
+*.kubeconfig
+.kube/
+
+# Helm charts dependencies
+charts/*/charts/
+charts/*/Chart.lock
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Debug files
+debug
+debug.test
+*.pprof
+
+# Build directories
+_output/
+_build/
+dist/ 
