@@ -80,18 +80,14 @@ func main() {
 
 	// Create metrics clients
 	// TODO: These would need proper implementations
-	metricsClient := &metrics.DummyMetricsClient{}
-	customMetricsClient := &metrics.DummyMetricsClient{}
-	externalMetricsClient := &metrics.DummyMetricsClient{}
+	metricsClient := metrics.NewMetricsClient(mgr.GetClient(), mgr.GetRESTMapper())
 
 	if err = (&controllers.KPodAutoscalerReconciler{
-		Client:                mgr.GetClient(),
-		Scheme:                mgr.GetScheme(),
-		Log:                   ctrl.Log.WithName("controllers").WithName("KPodAutoscaler"),
-		MetricsClient:         metricsClient,
-		CustomMetricsClient:   customMetricsClient,
-		ExternalMetricsClient: externalMetricsClient,
-		Recorder:              mgr.GetEventRecorderFor("kpodautoscaler-controller"),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Log:           ctrl.Log.WithName("controllers").WithName("KPodAutoscaler"),
+		MetricsClient: metricsClient,
+		Recorder:      mgr.GetEventRecorderFor("kpodautoscaler-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KPodAutoscaler")
 		os.Exit(1)

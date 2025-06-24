@@ -249,16 +249,15 @@ type KPodAutoscalerSpec struct {
 	ScaleTargetRef ScaleTargetRef `json:"scaleTargetRef"`
 
 	// minReplicas is the lower limit for the number of replicas to which the autoscaler
-	// can scale down.  It defaults to 1 pod.  minReplicas is allowed to be 0 if the
-	// alpha feature gate HPAScaleToZero is enabled and at least one Object or External
-	// metric is configured.  Scaling is active as long as at least one metric value is
-	// available.
+	// can scale down.  It defaults to 1 pod.  minReplicas is allowed to be 0 if at least
+	// one Object or External metric is configured.  Scaling is active as long as at least
+	// one metric value is available.
 	// +optional
-	MinReplicas *int32 `json:"minReplicas,omitempty"`
+	MinReplicas resource.Quantity `json:"minReplicas,omitempty"`
 
 	// maxReplicas is the upper limit for the number of replicas to which the autoscaler can scale up.
 	// It cannot be less that minReplicas.
-	MaxReplicas int32 `json:"maxReplicas"`
+	MaxReplicas resource.Quantity `json:"maxReplicas"`
 
 	// metrics contains the specifications for which to use to calculate the
 	// desired replica count (the maximum replica count across all metrics will

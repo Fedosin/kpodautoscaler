@@ -188,11 +188,8 @@ func (in *KPodAutoscalerList) DeepCopyObject() runtime.Object {
 func (in *KPodAutoscalerSpec) DeepCopyInto(out *KPodAutoscalerSpec) {
 	*out = *in
 	out.ScaleTargetRef = in.ScaleTargetRef
-	if in.MinReplicas != nil {
-		in, out := &in.MinReplicas, &out.MinReplicas
-		*out = new(int32)
-		**out = **in
-	}
+	out.MinReplicas = in.MinReplicas.DeepCopy()
+	out.MaxReplicas = in.MaxReplicas.DeepCopy()
 	if in.Metrics != nil {
 		in, out := &in.Metrics, &out.Metrics
 		*out = make([]MetricSpec, len(*in))

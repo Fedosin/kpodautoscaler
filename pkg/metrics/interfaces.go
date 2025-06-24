@@ -15,33 +15,3 @@ limitations under the License.
 */
 
 package metrics
-
-import (
-	"context"
-
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-
-	"github.com/Fedosin/kpodautoscaler/api/v1alpha1"
-)
-
-// MetricsClient provides access to resource metrics
-type MetricsClient interface {
-	// GetResourceMetric gets the given resource metric for the specified pods
-	GetResourceMetric(ctx context.Context, pods []corev1.Pod, resourceName corev1.ResourceName) ([]*resource.Quantity, error)
-}
-
-// CustomMetricsClient provides access to custom metrics
-type CustomMetricsClient interface {
-	// GetPodsMetric gets the given custom metric for the specified pods
-	GetPodsMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier, pods []corev1.Pod) ([]*resource.Quantity, error)
-
-	// GetObjectMetric gets the given custom metric for the specified object
-	GetObjectMetric(ctx context.Context, namespace string, object v1alpha1.CrossVersionObjectReference, metric v1alpha1.MetricIdentifier) (*resource.Quantity, error)
-}
-
-// ExternalMetricsClient provides access to external metrics
-type ExternalMetricsClient interface {
-	// GetExternalMetric gets the given external metric
-	GetExternalMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier) ([]*resource.Quantity, error)
-}

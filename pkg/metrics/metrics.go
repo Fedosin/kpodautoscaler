@@ -27,24 +27,24 @@ import (
 	"github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 )
 
-// DummyMetricsClient provides access to various metrics APIs
-type DummyMetricsClient struct {
+// MetricsClient provides access to various metrics APIs
+type MetricsClient struct {
 	client.Client
 	restMapper meta.RESTMapper
 }
 
-// NewDummyMetricsClient creates a new dummy metrics client
-func NewDummyMetricsClient(c client.Client, mapper meta.RESTMapper) *DummyMetricsClient {
+// NewMetricsClient creates a new  metrics client
+func NewMetricsClient(c client.Client, mapper meta.RESTMapper) *MetricsClient {
 	// For simplicity, we'll just store the client and mapper
 	// In a real implementation, you'd create the metrics client from the config
-	return &DummyMetricsClient{
+	return &MetricsClient{
 		Client:     c,
 		restMapper: mapper,
 	}
 }
 
 // GetResourceMetric gets CPU or memory metrics for pods
-func (mc *DummyMetricsClient) GetResourceMetric(ctx context.Context, pods []corev1.Pod, resourceName corev1.ResourceName) ([]*resource.Quantity, error) {
+func (mc *MetricsClient) GetResourceMetric(ctx context.Context, pods []corev1.Pod, resourceName corev1.ResourceName) ([]*resource.Quantity, error) {
 	values := make([]*resource.Quantity, 0, len(pods))
 
 	// For simplicity, return mock data
@@ -62,7 +62,7 @@ func (mc *DummyMetricsClient) GetResourceMetric(ctx context.Context, pods []core
 }
 
 // GetPodsMetric gets custom metrics for pods
-func (mc *DummyMetricsClient) GetPodsMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier, pods []corev1.Pod) ([]*resource.Quantity, error) {
+func (mc *MetricsClient) GetPodsMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier, pods []corev1.Pod) ([]*resource.Quantity, error) {
 	values := make([]*resource.Quantity, 0, len(pods))
 
 	// For simplicity, return mock data
@@ -74,13 +74,13 @@ func (mc *DummyMetricsClient) GetPodsMetric(ctx context.Context, namespace strin
 }
 
 // GetObjectMetric gets metrics for a Kubernetes object
-func (mc *DummyMetricsClient) GetObjectMetric(ctx context.Context, namespace string, object v1alpha1.CrossVersionObjectReference, metric v1alpha1.MetricIdentifier) (*resource.Quantity, error) {
+func (mc *MetricsClient) GetObjectMetric(ctx context.Context, namespace string, object v1alpha1.CrossVersionObjectReference, metric v1alpha1.MetricIdentifier) (*resource.Quantity, error) {
 	// For simplicity, return mock data
 	return resource.NewScaledQuantity(100, resource.Milli), nil
 }
 
 // GetExternalMetric gets external metrics
-func (mc *DummyMetricsClient) GetExternalMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier) ([]*resource.Quantity, error) {
+func (mc *MetricsClient) GetExternalMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier) ([]*resource.Quantity, error) {
 	// For simplicity, return mock data
 	return []*resource.Quantity{resource.NewScaledQuantity(200, resource.Milli)}, nil
 }
