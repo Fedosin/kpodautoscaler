@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2025 The KPodAutoscaler Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,11 +18,15 @@ package metrics
 
 import (
 	"context"
-
+	"fmt"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/labels"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	external "k8s.io/metrics/pkg/client/external_metrics"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 )
@@ -31,15 +35,22 @@ import (
 type MetricsClient struct {
 	client.Client
 	restMapper meta.RESTMapper
+
+	emClient external.ExternalMetricsClient
 }
 
 // NewMetricsClient creates a new  metrics client
 func NewMetricsClient(c client.Client, mapper meta.RESTMapper) *MetricsClient {
-	// For simplicity, we'll just store the client and mapper
-	// In a real implementation, you'd create the metrics client from the config
+	config := ctrl.GetConfigOrDie()
+	emClient, err := external.NewForConfig(config)
+	if err != nil {
+		panic(err)
+	}
+
 	return &MetricsClient{
 		Client:     c,
 		restMapper: mapper,
+		emClient:   emClient,
 	}
 }
 
@@ -81,6 +92,26 @@ func (mc *MetricsClient) GetObjectMetric(ctx context.Context, namespace string, 
 
 // GetExternalMetric gets external metrics
 func (mc *MetricsClient) GetExternalMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier) ([]*resource.Quantity, error) {
-	// For simplicity, return mock data
-	return []*resource.Quantity{resource.NewScaledQuantity(200, resource.Milli)}, nil
+    metricsIface := mc.emClient.NamespacedMetrics(namespace)
+
+	var err error
+
+	selector := labels.NewSelector()
+	if metric.Selector != nil {
+		selector, err = metav1.LabelSelectorAsSelector(metric.Selector)
+		if err != nil {
+			return nil, fmt.Errorf("invalid label selector: %v", err)
+		}
+	}
+	metricList, err := metricsIface.List(metric.Name, selector)
+    if err != nil {
+        return nil, fmt.Errorf("error fetching external metric %q: %v", metric.Name, err)
+    }	
+
+	values := make([]*resource.Quantity, 0, len(metricList.Items))
+	for _, item := range metricList.Items {
+		values = append(values, &item.Value)
+	}
+
+	return values, nil
 }
