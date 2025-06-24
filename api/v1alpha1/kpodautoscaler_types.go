@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"time"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,50 +61,58 @@ const (
 
 // MetricConfig contains configuration for libkpa autoscaler
 type MetricConfig struct {
-	// Algorithm specifies the algorithm to use for autoscaling
+	// AggregationAlgorithm specifies the algorithm to use for metrics aggregation
 	// Possible values: "linear" (default) or "weighted"
 	// +optional
-	Algorithm string `json:"algorithm,omitempty"`
+	AggregationAlgorithm string `json:"aggregationAlgorithm,omitempty"`
 
-	// WindowSize is the time window for stable metrics
-	// +optional
-	WindowSize *metav1.Duration `json:"windowSize,omitempty"`
-
-	// PanicWindow is the time window for panic metrics
-	// +optional
-	PanicWindow *metav1.Duration `json:"panicWindow,omitempty"`
-
-	// ScaleUpRate is the maximum scale up rate
-	// +optional
-	ScaleUpRate *resource.Quantity `json:"scaleUpRate,omitempty"`
-
-	// ScaleDownRate is the maximum scale down rate
-	// +optional
-	ScaleDownRate *resource.Quantity `json:"scaleDownRate,omitempty"`
-
-	// MaxScaleUpRate is the maximum scale up rate
-	// +optional
+	// MaxScaleUpRate is the maximum rate at which the autoscaler will scale up pods.
+	// It must be greater than 1.0. For example, a value of 2.0 allows scaling up
+	// by at most doubling the pod count. Default is 1000.0.
 	MaxScaleUpRate *resource.Quantity `json:"maxScaleUpRate,omitempty"`
 
-	// MaxScaleDownRate is the maximum scale down rate
-	// +optional
+	// MaxScaleDownRate is the maximum rate at which the autoscaler will scale down pods.
+	// It must be greater than 1.0. For example, a value of 2.0 allows scaling down
+	// by at most halving the pod count. Default is 2.0.
 	MaxScaleDownRate *resource.Quantity `json:"maxScaleDownRate,omitempty"`
 
-	// PanicThreshold is the threshold for entering panic mode
-	// +optional
+	// TargetValue is the desired value of the scaling metric per pod that we aim to maintain.
+	// This must be less than or equal to TotalValue. Default is 100.0.
+	TargetValue *resource.Quantity `json:"targetValue,omitempty"`
+
+	// TotalValue is the total capacity of the scaling metric that a pod can handle.
+	// Default is 1000.0.
+	TotalValue *resource.Quantity `json:"totalValue,omitempty"`
+
+	// TargetBurstCapacity is the desired burst capacity to maintain without queuing.
+	// If negative, it means unlimited burst capacity. Default is 211.0.
+	TargetBurstCapacity *resource.Quantity `json:"targetBurstCapacity,omitempty"`
+
+	// PanicThreshold is the threshold for entering panic mode, expressed as a
+	// percentage of desired pod count. If the observed load over the panic window
+	// exceeds this percentage of the current pod count capacity, panic mode is triggered.
+	// Default is 200 (200%).
 	PanicThreshold *resource.Quantity `json:"panicThreshold,omitempty"`
 
-	// StableWindow is the window size for stable metrics
-	// +optional
-	StableWindow *metav1.Duration `json:"stableWindow,omitempty"`
+	// PanicWindowPercentage is the percentage of the stable window used for
+	// panic mode calculations. Must be in range [1.0, 100.0]. Default is 10.0.
+	PanicWindowPercentage *resource.Quantity `json:"panicWindowPercentage,omitempty"`
 
-	// InitialScale is the initial scale value
-	// +optional
-	InitialScale *int32 `json:"initialScale,omitempty"`
+	// StableWindow is the time window over which metrics are averaged for
+	// scaling decisions. Must be between 5s and 600s. Default is 60s.
+	StableWindow time.Duration `json:"stableWindow,omitempty"`
 
-	// TargetUtilization is the target utilization percentage
-	// +optional
-	TargetUtilization *resource.Quantity `json:"targetUtilization,omitempty"`
+	// ScaleDownDelay is the minimum time that must pass at reduced load
+	// before scaling down. Default is 0s (immediate scale down).
+	ScaleDownDelay time.Duration `json:"scaleDownDelay,omitempty"`
+
+	// ActivationScale is the minimum scale to use when scaling from zero.
+	// Must be >= 1. Default is 1.
+	ActivationScale int32 `json:"activationScale,omitempty"`
+
+	// ScaleToZeroGracePeriod is the time to wait before scaling to zero
+	// after the service becomes idle. Default is 30s.
+	ScaleToZeroGracePeriod time.Duration `json:"scaleToZeroGracePeriod,omitempty"`
 }
 
 // MetricTarget defines the target value, average value, or average utilization of a specific metric

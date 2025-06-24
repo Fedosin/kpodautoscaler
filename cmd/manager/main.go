@@ -81,8 +81,8 @@ func main() {
 	// Create metrics clients
 	// TODO: These would need proper implementations
 	metricsClient := &metrics.DummyMetricsClient{}
-	customMetricsClient := &metrics.DummyCustomMetricsClient{}
-	externalMetricsClient := &metrics.DummyExternalMetricsClient{}
+	customMetricsClient := &metrics.DummyMetricsClient{}
+	externalMetricsClient := &metrics.DummyMetricsClient{}
 
 	if err = (&controllers.KPodAutoscalerReconciler{
 		Client:                mgr.GetClient(),

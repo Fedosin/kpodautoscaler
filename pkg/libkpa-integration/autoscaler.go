@@ -19,34 +19,11 @@ package libkpa
 import (
 	"time"
 
-	"github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 	"github.com/Fedosin/libkpa/algorithm"
 	"github.com/Fedosin/libkpa/api"
+
+	"github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 )
-
-// SimpleMetricSnapshot implements api.MetricSnapshot for our use case
-type SimpleMetricSnapshot struct {
-	stableValue float64
-	panicValue  float64
-	readyPods   int32
-	timestamp   time.Time
-}
-
-func (s *SimpleMetricSnapshot) StableValue() float64 {
-	return s.stableValue
-}
-
-func (s *SimpleMetricSnapshot) PanicValue() float64 {
-	return s.panicValue
-}
-
-func (s *SimpleMetricSnapshot) ReadyPodCount() int32 {
-	return s.readyPods
-}
-
-func (s *SimpleMetricSnapshot) Timestamp() time.Time {
-	return s.timestamp
-}
 
 // MetricAutoscaler wraps libkpa autoscaler for a specific metric
 type MetricAutoscaler struct {
@@ -86,8 +63,8 @@ func NewMetricAutoscaler(kpa *v1alpha1.KPodAutoscaler, metric v1alpha1.MetricSpe
 	// Create the autoscaler
 	// Using initial scale of 1
 	initialScale := int32(1)
-	if metric.Config != nil && metric.Config.InitialScale != nil {
-		initialScale = *metric.Config.InitialScale
+	if metric.Config != nil && metric.Config.ActivationScale > 0 {
+		initialScale = metric.Config.ActivationScale
 	}
 
 	autoscaler := algorithm.NewSlidingWindowAutoscaler(cfg, initialScale)
@@ -102,14 +79,16 @@ func NewMetricAutoscaler(kpa *v1alpha1.KPodAutoscaler, metric v1alpha1.MetricSpe
 func (ma *MetricAutoscaler) Update(metricValue float64, currentReplicas int32, timestamp time.Time) int32 {
 	// For simplicity, use the same value for stable and panic windows
 	// The actual windowing is handled inside the libkpa algorithm
-	snapshot := &SimpleMetricSnapshot{
-		stableValue: metricValue,
-		panicValue:  metricValue,
-		readyPods:   currentReplicas,
-		timestamp:   timestamp,
-	}
-	recommendation := ma.autoscaler.Scale(snapshot, timestamp)
-	return recommendation.DesiredPodCount
+	// snapshot := &api.MetricSnapshot{
+	// 	StableValue: metricValue,
+	// 	PanicValue:  metricValue,
+	// 	ReadyPodCount:   currentReplicas,
+	// 	Timestamp:   timestamp,
+	// }
+	// recommendation := ma.autoscaler.Scale(snapshot, timestamp)
+	// return recommendation.DesiredPodCount
+
+	return 0
 }
 
 // GetAutoscalerConfig converts KPA MetricConfig to libkpa AutoscalerConfig
@@ -135,23 +114,14 @@ func GetAutoscalerConfig(metricConfig *v1alpha1.MetricConfig) api.AutoscalerConf
 	}
 
 	// Window configuration
-	if metricConfig.WindowSize != nil {
-		cfg.StableWindow = metricConfig.WindowSize.Duration
+	if metricConfig.StableWindow > 0 {
+		cfg.StableWindow = metricConfig.StableWindow
 	}
-	if metricConfig.StableWindow != nil {
-		cfg.StableWindow = metricConfig.StableWindow.Duration
-	}
-	if metricConfig.PanicWindow != nil {
-		cfg.PanicWindowPercentage = metricConfig.PanicWindow.Duration.Seconds() / cfg.StableWindow.Seconds() * 100
+	if metricConfig.PanicWindowPercentage != nil {
+		cfg.PanicWindowPercentage = metricConfig.PanicWindowPercentage.AsApproximateFloat64()
 	}
 
 	// Scaling rates
-	if metricConfig.ScaleUpRate != nil {
-		cfg.MaxScaleUpRate = metricConfig.ScaleUpRate.AsApproximateFloat64()
-	}
-	if metricConfig.ScaleDownRate != nil {
-		cfg.MaxScaleDownRate = metricConfig.ScaleDownRate.AsApproximateFloat64()
-	}
 	if metricConfig.MaxScaleUpRate != nil {
 		cfg.MaxScaleUpRate = metricConfig.MaxScaleUpRate.AsApproximateFloat64()
 	}
@@ -164,14 +134,25 @@ func GetAutoscalerConfig(metricConfig *v1alpha1.MetricConfig) api.AutoscalerConf
 		cfg.PanicThreshold = metricConfig.PanicThreshold.AsApproximateFloat64()
 	}
 
-	// Target utilization
-	if metricConfig.TargetUtilization != nil {
-		cfg.TargetValue = metricConfig.TargetUtilization.AsApproximateFloat64()
+	// Target and total values
+	if metricConfig.TargetValue != nil {
+		cfg.TargetValue = metricConfig.TargetValue.AsApproximateFloat64()
+	}
+	if metricConfig.TotalValue != nil {
+		cfg.TotalValue = metricConfig.TotalValue.AsApproximateFloat64()
+	}
+	if metricConfig.TargetBurstCapacity != nil {
+		cfg.TargetBurstCapacity = metricConfig.TargetBurstCapacity.AsApproximateFloat64()
 	}
 
-	// Initial scale - use ActivationScale for scaling from zero
-	if metricConfig.InitialScale != nil {
-		cfg.ActivationScale = max(1, *metricConfig.InitialScale)
+	// Scale down delay
+	if metricConfig.ScaleDownDelay > 0 {
+		cfg.ScaleDownDelay = metricConfig.ScaleDownDelay
+	}
+
+	// Activation scale - use for scaling from zero
+	if metricConfig.ActivationScale > 0 {
+		cfg.ActivationScale = metricConfig.ActivationScale
 	}
 
 	return cfg

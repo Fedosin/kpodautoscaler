@@ -25,23 +25,16 @@ import (
 	"github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 )
 
-// PodMetric represents a metric value for a pod
-type PodMetric struct {
-	Name      string
-	Namespace string
-	Value     *resource.Quantity
-}
-
 // MetricsClient provides access to resource metrics
 type MetricsClient interface {
 	// GetResourceMetric gets the given resource metric for the specified pods
-	GetResourceMetric(ctx context.Context, pods []corev1.Pod, resourceName corev1.ResourceName) ([]PodMetric, error)
+	GetResourceMetric(ctx context.Context, pods []corev1.Pod, resourceName corev1.ResourceName) ([]*resource.Quantity, error)
 }
 
 // CustomMetricsClient provides access to custom metrics
 type CustomMetricsClient interface {
 	// GetPodsMetric gets the given custom metric for the specified pods
-	GetPodsMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier, pods []corev1.Pod) ([]PodMetric, error)
+	GetPodsMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier, pods []corev1.Pod) ([]*resource.Quantity, error)
 
 	// GetObjectMetric gets the given custom metric for the specified object
 	GetObjectMetric(ctx context.Context, namespace string, object v1alpha1.CrossVersionObjectReference, metric v1alpha1.MetricIdentifier) (*resource.Quantity, error)

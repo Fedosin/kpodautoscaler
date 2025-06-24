@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The KPodAutoscaler Authors.
+Copyright 2024.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,68 +20,67 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 )
 
-// DummyMetricsClient is a dummy implementation of MetricsClient for testing
-type DummyMetricsClient struct{}
+// DummyMetricsClient provides access to various metrics APIs
+type DummyMetricsClient struct {
+	client.Client
+	restMapper meta.RESTMapper
+}
 
-// GetResourceMetric returns dummy metrics
-func (d *DummyMetricsClient) GetResourceMetric(ctx context.Context, pods []corev1.Pod, resourceName corev1.ResourceName) ([]PodMetric, error) {
-	// Return dummy metrics - 50% utilization for all pods
-	metrics := make([]PodMetric, len(pods))
-	for i, pod := range pods {
-		// Get the resource request
-		var totalRequest int64
-		for _, container := range pod.Spec.Containers {
-			if request, ok := container.Resources.Requests[resourceName]; ok {
-				totalRequest += request.MilliValue()
-			}
-		}
+// NewDummyMetricsClient creates a new dummy metrics client
+func NewDummyMetricsClient(c client.Client, mapper meta.RESTMapper) *DummyMetricsClient {
+	// For simplicity, we'll just store the client and mapper
+	// In a real implementation, you'd create the metrics client from the config
+	return &DummyMetricsClient{
+		Client:     c,
+		restMapper: mapper,
+	}
+}
 
-		// Return 50% of request as current usage
-		value := resource.NewMilliQuantity(totalRequest/2, resource.DecimalSI)
-		metrics[i] = PodMetric{
-			Name:      pod.Name,
-			Namespace: pod.Namespace,
-			Value:     value,
+// GetResourceMetric gets CPU or memory metrics for pods
+func (mc *DummyMetricsClient) GetResourceMetric(ctx context.Context, pods []corev1.Pod, resourceName corev1.ResourceName) ([]*resource.Quantity, error) {
+	values := make([]*resource.Quantity, 0, len(pods))
+
+	// For simplicity, return mock data
+	// In a real implementation, you'd query the metrics server
+	for range pods {
+		// Return 100m CPU or 100Mi memory as mock values
+		if resourceName == corev1.ResourceCPU {
+			values = append(values, resource.NewScaledQuantity(100, resource.Milli))
+		} else {
+			values = append(values, resource.NewScaledQuantity(100, resource.Mega))
 		}
 	}
-	return metrics, nil
+
+	return values, nil
 }
 
-// DummyCustomMetricsClient is a dummy implementation of CustomMetricsClient for testing
-type DummyCustomMetricsClient struct{}
+// GetPodsMetric gets custom metrics for pods
+func (mc *DummyMetricsClient) GetPodsMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier, pods []corev1.Pod) ([]*resource.Quantity, error) {
+	values := make([]*resource.Quantity, 0, len(pods))
 
-// GetPodsMetric returns dummy custom metrics
-func (d *DummyCustomMetricsClient) GetPodsMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier, pods []corev1.Pod) ([]PodMetric, error) {
-	// Return dummy metrics - 100 units per pod
-	metrics := make([]PodMetric, len(pods))
-	for i, pod := range pods {
-		value := resource.NewQuantity(100, resource.DecimalSI)
-		metrics[i] = PodMetric{
-			Name:      pod.Name,
-			Namespace: pod.Namespace,
-			Value:     value,
-		}
+	// For simplicity, return mock data
+	for range pods {
+		values = append(values, resource.NewScaledQuantity(50, resource.Milli))
 	}
-	return metrics, nil
+
+	return values, nil
 }
 
-// GetObjectMetric returns a dummy object metric
-func (d *DummyCustomMetricsClient) GetObjectMetric(ctx context.Context, namespace string, object v1alpha1.CrossVersionObjectReference, metric v1alpha1.MetricIdentifier) (*resource.Quantity, error) {
-	// Return dummy metric - 1000 units
-	return resource.NewQuantity(1000, resource.DecimalSI), nil
+// GetObjectMetric gets metrics for a Kubernetes object
+func (mc *DummyMetricsClient) GetObjectMetric(ctx context.Context, namespace string, object v1alpha1.CrossVersionObjectReference, metric v1alpha1.MetricIdentifier) (*resource.Quantity, error) {
+	// For simplicity, return mock data
+	return resource.NewScaledQuantity(100, resource.Milli), nil
 }
 
-// DummyExternalMetricsClient is a dummy implementation of ExternalMetricsClient for testing
-type DummyExternalMetricsClient struct{}
-
-// GetExternalMetric returns dummy external metrics
-func (d *DummyExternalMetricsClient) GetExternalMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier) ([]*resource.Quantity, error) {
-	// Return dummy metric - 500 units
-	value := resource.NewQuantity(500, resource.DecimalSI)
-	return []*resource.Quantity{value}, nil
+// GetExternalMetric gets external metrics
+func (mc *DummyMetricsClient) GetExternalMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier) ([]*resource.Quantity, error) {
+	// For simplicity, return mock data
+	return []*resource.Quantity{resource.NewScaledQuantity(200, resource.Milli)}, nil
 }

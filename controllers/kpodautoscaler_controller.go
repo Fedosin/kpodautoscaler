@@ -313,7 +313,7 @@ func (r *KPodAutoscalerReconciler) fetchResourceMetric(ctx context.Context, kpa 
 
 	for _, metric := range metrics {
 		if metric.Value != nil {
-			totalValue += metric.Value.MilliValue()
+			totalValue += metric.MilliValue()
 			count++
 		}
 	}
@@ -366,7 +366,7 @@ func (r *KPodAutoscalerReconciler) fetchPodsMetric(ctx context.Context, kpa *aut
 
 	for _, metric := range metrics {
 		if metric.Value != nil {
-			totalValue += metric.Value.MilliValue()
+			totalValue += metric.MilliValue()
 			count++
 		}
 	}
