@@ -1,5 +1,5 @@
-github.com/Fedosin/libkpa v0.0.0-20250622172006-848acbabbd02 h1:g4Dn/pQ5cpDzG0WD5uGppl7VBU8OaW9muj5Q0rdRBuI=
-github.com/Fedosin/libkpa v0.0.0-20250622172006-848acbabbd02/go.mod h1:LmQi7L8zIa6jzqdB1oUE3GO7UHd7UFuNrZBQ1N5HO88=
+github.com/Fedosin/libkpa v0.0.0-20250624123221-d3442460448f h1:kq0Cy+6zyl9/YR71nmsgiOgLghOwl1EmNGvar+kWOvw=
+github.com/Fedosin/libkpa v0.0.0-20250624123221-d3442460448f/go.mod h1:LmQi7L8zIa6jzqdB1oUE3GO7UHd7UFuNrZBQ1N5HO88=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/blang/semver/v4 v4.0.0 h1:1PFHFE6yCCTv8C1TeyNNarDzntLi7wMI5i/pzqYIsAM=

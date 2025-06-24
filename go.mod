@@ -3,7 +3,7 @@ module github.com/Fedosin/kpodautoscaler
 go 1.24.4
 
 require (
-	github.com/Fedosin/libkpa v0.0.0-20250622172006-848acbabbd02
+	github.com/Fedosin/libkpa v0.0.0-20250624123221-d3442460448f
 	github.com/go-logr/logr v1.4.2
 	k8s.io/api v0.33.2
 	k8s.io/apimachinery v0.33.2
