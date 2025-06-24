@@ -22,17 +22,18 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/labels"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/restmapper"
+	"k8s.io/metrics/pkg/client/clientset/versioned"
 	custommetrics "k8s.io/metrics/pkg/client/custom_metrics"
 	externalmetrics "k8s.io/metrics/pkg/client/external_metrics"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 )
@@ -42,6 +43,7 @@ type MetricsClient struct {
 	client.Client
 	restMapper meta.RESTMapper
 
+	mClient  versioned.Interface
 	cmClient custommetrics.CustomMetricsClient
 	emClient externalmetrics.ExternalMetricsClient
 }
@@ -59,9 +61,15 @@ func NewMetricsClient(c client.Client, mapper meta.RESTMapper) *MetricsClient {
 		panic(err)
 	}
 
+	mClient, err := versioned.NewForConfig(config)
+	if err != nil {
+		panic(err)
+	}
+
 	return &MetricsClient{
 		Client:     c,
 		restMapper: mapper,
+		mClient:    mClient,
 		emClient:   emClient,
 		cmClient:   cmClient,
 	}
@@ -69,45 +77,53 @@ func NewMetricsClient(c client.Client, mapper meta.RESTMapper) *MetricsClient {
 
 // NewCustomMetricsClient builds and returns a CustomMetricsClient.
 func NewCustomMetricsClient() (custommetrics.CustomMetricsClient, error) {
-    cfg := ctrl.GetConfigOrDie()
+	cfg := ctrl.GetConfigOrDie()
 
-    // Create Discovery client
-    disco, err := discovery.NewDiscoveryClientForConfig(cfg)
-    if err != nil {
-        return nil, fmt.Errorf("creating discovery client: %w", err)
-    }
+	// Create Discovery client
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("creating discovery client: %w", err)
+	}
 
-    // Build RESTMapper from available API group resources
-    grs, err := restmapper.GetAPIGroupResources(disco)
-    if err != nil {
-        return nil, fmt.Errorf("getting API group resources: %w", err)
-    }
-    mapper := restmapper.NewDiscoveryRESTMapper(grs)
+	// Build RESTMapper from available API group resources
+	grs, err := restmapper.GetAPIGroupResources(disco)
+	if err != nil {
+		return nil, fmt.Errorf("getting API group resources: %w", err)
+	}
+	mapper := restmapper.NewDiscoveryRESTMapper(grs)
 
-    // Prepare AvailableAPIsGetter and CustomMetricsClient 
-    available := custommetrics.NewAvailableAPIsGetter(disco)
-    client := custommetrics.NewForConfig(cfg, mapper, available)
+	// Prepare AvailableAPIsGetter and CustomMetricsClient
+	available := custommetrics.NewAvailableAPIsGetter(disco)
+	client := custommetrics.NewForConfig(cfg, mapper, available)
 
-    // Keep cache fresh:
-    stopCh := make(chan struct{})
-    go custommetrics.PeriodicallyInvalidate(available, 10*time.Minute, stopCh)
+	// Keep cache fresh:
+	stopCh := make(chan struct{})
+	go custommetrics.PeriodicallyInvalidate(available, 10*time.Minute, stopCh)
 
-    return client, nil
+	return client, nil
 }
 
 // GetResourceMetric gets CPU or memory metrics for pods
 func (mc *MetricsClient) GetResourceMetric(ctx context.Context, pods []corev1.Pod, resourceName corev1.ResourceName) ([]*resource.Quantity, error) {
 	values := make([]*resource.Quantity, 0, len(pods))
 
-	// For simplicity, return mock data
-	// In a real implementation, you'd query the metrics server
-	for range pods {
-		// Return 100m CPU or 100Mi memory as mock values
-		if resourceName == corev1.ResourceCPU {
-			values = append(values, resource.NewScaledQuantity(100, resource.Milli))
-		} else {
-			values = append(values, resource.NewScaledQuantity(100, resource.Mega))
+	if len(pods) == 0 {
+		return values, nil
+	}
+
+	for _, pod := range pods {
+		podMetrics, err := mc.mClient.MetricsV1beta1().PodMetricses(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get metrics for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 		}
+
+		podTotalUsage := resource.NewQuantity(0, resource.DecimalSI)
+		for _, container := range podMetrics.Containers {
+			if usage, found := container.Usage[resourceName]; found {
+				podTotalUsage.Add(usage)
+			}
+		}
+		values = append(values, podTotalUsage)
 	}
 
 	return values, nil
@@ -163,16 +179,16 @@ func (mc *MetricsClient) GetObjectMetric(ctx context.Context, namespace string, 
 	}
 
 	metricValue, err := metricsIface.GetForObject(schema.GroupKind{Group: group, Kind: object.Kind}, object.Name, metric.Name, selector)
-    if err != nil {
-        return nil, fmt.Errorf("error fetching custom metric %q: %v", metric.Name, err)
-    }
+	if err != nil {
+		return nil, fmt.Errorf("error fetching custom metric %q: %v", metric.Name, err)
+	}
 
 	return &metricValue.Value, nil
 }
 
 // GetExternalMetric gets external metrics
 func (mc *MetricsClient) GetExternalMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier) ([]*resource.Quantity, error) {
-    metricsIface := mc.emClient.NamespacedMetrics(namespace)
+	metricsIface := mc.emClient.NamespacedMetrics(namespace)
 
 	var err error
 
@@ -184,9 +200,9 @@ func (mc *MetricsClient) GetExternalMetric(ctx context.Context, namespace string
 		}
 	}
 	metricList, err := metricsIface.List(metric.Name, selector)
-    if err != nil {
-        return nil, fmt.Errorf("error fetching external metric %q: %v", metric.Name, err)
-    }	
+	if err != nil {
+		return nil, fmt.Errorf("error fetching external metric %q: %v", metric.Name, err)
+	}
 
 	values := make([]*resource.Quantity, 0, len(metricList.Items))
 	for _, item := range metricList.Items {
@@ -197,13 +213,13 @@ func (mc *MetricsClient) GetExternalMetric(ctx context.Context, namespace string
 }
 
 func groupFromAPIVersion(apiVersion string) (string, error) {
-    gv, err := schema.ParseGroupVersion(apiVersion)
-    if err != nil {
-        return "", err
-    }
-    // gv.Group is empty for core
-    if gv.Group == "" {
-        return "core", nil
-    }
-    return gv.Group, nil
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return "", err
+	}
+	// gv.Group is empty for core
+	if gv.Group == "" {
+		return "core", nil
+	}
+	return gv.Group, nil
 }
