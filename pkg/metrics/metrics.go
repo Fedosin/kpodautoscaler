@@ -19,12 +19,18 @@ package metrics
 import (
 	"context"
 	"fmt"
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/labels"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	external "k8s.io/metrics/pkg/client/external_metrics"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/restmapper"
+	custommetrics "k8s.io/metrics/pkg/client/custom_metrics"
+	externalmetrics "k8s.io/metrics/pkg/client/external_metrics"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -36,13 +42,19 @@ type MetricsClient struct {
 	client.Client
 	restMapper meta.RESTMapper
 
-	emClient external.ExternalMetricsClient
+	cmClient custommetrics.CustomMetricsClient
+	emClient externalmetrics.ExternalMetricsClient
 }
 
 // NewMetricsClient creates a new  metrics client
 func NewMetricsClient(c client.Client, mapper meta.RESTMapper) *MetricsClient {
 	config := ctrl.GetConfigOrDie()
-	emClient, err := external.NewForConfig(config)
+	emClient, err := externalmetrics.NewForConfig(config)
+	if err != nil {
+		panic(err)
+	}
+
+	cmClient, err := NewCustomMetricsClient()
 	if err != nil {
 		panic(err)
 	}
@@ -51,7 +63,36 @@ func NewMetricsClient(c client.Client, mapper meta.RESTMapper) *MetricsClient {
 		Client:     c,
 		restMapper: mapper,
 		emClient:   emClient,
+		cmClient:   cmClient,
 	}
+}
+
+// NewCustomMetricsClient builds and returns a CustomMetricsClient.
+func NewCustomMetricsClient() (custommetrics.CustomMetricsClient, error) {
+    cfg := ctrl.GetConfigOrDie()
+
+    // Create Discovery client
+    disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+    if err != nil {
+        return nil, fmt.Errorf("creating discovery client: %w", err)
+    }
+
+    // Build RESTMapper from available API group resources
+    grs, err := restmapper.GetAPIGroupResources(disco)
+    if err != nil {
+        return nil, fmt.Errorf("getting API group resources: %w", err)
+    }
+    mapper := restmapper.NewDiscoveryRESTMapper(grs)
+
+    // Prepare AvailableAPIsGetter and CustomMetricsClient 
+    available := custommetrics.NewAvailableAPIsGetter(disco)
+    client := custommetrics.NewForConfig(cfg, mapper, available)
+
+    // Keep cache fresh:
+    stopCh := make(chan struct{})
+    go custommetrics.PeriodicallyInvalidate(available, 10*time.Minute, stopCh)
+
+    return client, nil
 }
 
 // GetResourceMetric gets CPU or memory metrics for pods
@@ -74,11 +115,29 @@ func (mc *MetricsClient) GetResourceMetric(ctx context.Context, pods []corev1.Po
 
 // GetPodsMetric gets custom metrics for pods
 func (mc *MetricsClient) GetPodsMetric(ctx context.Context, namespace string, metric v1alpha1.MetricIdentifier, pods []corev1.Pod) ([]*resource.Quantity, error) {
+	metricsIface := mc.cmClient.NamespacedMetrics(namespace)
+
+	var err error
+
+	selector := labels.NewSelector()
+	if metric.Selector != nil {
+		selector, err = metav1.LabelSelectorAsSelector(metric.Selector)
+		if err != nil {
+			return nil, fmt.Errorf("invalid label selector: %v", err)
+		}
+	}
+
+	groupKind := schema.GroupKind{Group: "", Kind: "Pod"}
+
 	values := make([]*resource.Quantity, 0, len(pods))
 
-	// For simplicity, return mock data
-	for range pods {
-		values = append(values, resource.NewScaledQuantity(50, resource.Milli))
+	for _, pod := range pods {
+		metricValue, err := metricsIface.GetForObject(groupKind, pod.Name, metric.Name, selector)
+		if err != nil {
+			return nil, fmt.Errorf("error fetching custom metric %q: %v", metric.Name, err)
+		}
+
+		values = append(values, &metricValue.Value)
 	}
 
 	return values, nil
@@ -86,8 +145,29 @@ func (mc *MetricsClient) GetPodsMetric(ctx context.Context, namespace string, me
 
 // GetObjectMetric gets metrics for a Kubernetes object
 func (mc *MetricsClient) GetObjectMetric(ctx context.Context, namespace string, object v1alpha1.CrossVersionObjectReference, metric v1alpha1.MetricIdentifier) (*resource.Quantity, error) {
-	// For simplicity, return mock data
-	return resource.NewScaledQuantity(100, resource.Milli), nil
+	metricsIface := mc.cmClient.NamespacedMetrics(namespace)
+
+	var err error
+
+	selector := labels.NewSelector()
+	if metric.Selector != nil {
+		selector, err = metav1.LabelSelectorAsSelector(metric.Selector)
+		if err != nil {
+			return nil, fmt.Errorf("invalid label selector: %v", err)
+		}
+	}
+
+	group, err := groupFromAPIVersion(object.APIVersion)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing group from API version: %v", err)
+	}
+
+	metricValue, err := metricsIface.GetForObject(schema.GroupKind{Group: group, Kind: object.Kind}, object.Name, metric.Name, selector)
+    if err != nil {
+        return nil, fmt.Errorf("error fetching custom metric %q: %v", metric.Name, err)
+    }
+
+	return &metricValue.Value, nil
 }
 
 // GetExternalMetric gets external metrics
@@ -114,4 +194,16 @@ func (mc *MetricsClient) GetExternalMetric(ctx context.Context, namespace string
 	}
 
 	return values, nil
+}
+
+func groupFromAPIVersion(apiVersion string) (string, error) {
+    gv, err := schema.ParseGroupVersion(apiVersion)
+    if err != nil {
+        return "", err
+    }
+    // gv.Group is empty for core
+    if gv.Group == "" {
+        return "core", nil
+    }
+    return gv.Group, nil
 }
