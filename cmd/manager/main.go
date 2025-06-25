@@ -71,7 +71,7 @@ func main() {
 		Scheme:                 scheme,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "8f6b9f0e.autoscaling.io",
+		LeaderElectionID:       "8f6b9f0e.autoscaling.kpodautoscaler.io",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

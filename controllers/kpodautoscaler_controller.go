@@ -72,9 +72,9 @@ const (
 	panicTimeWindowGranularity  = time.Second
 )
 
-//+kubebuilder:rbac:groups=autoscaling.myorg.io,resources=kpodautoscalers,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=autoscaling.myorg.io,resources=kpodautoscalers/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=autoscaling.myorg.io,resources=kpodautoscalers/finalizers,verbs=update
+//+kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=apps,resources=deployments/scale;statefulsets/scale,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
@@ -101,7 +101,7 @@ func (r *KPodAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Set up finalizer
-	finalizerName := "kpodautoscaler.myorg.io/finalizer"
+	finalizerName := "kpodautoscaler.io/finalizer"
 	if kpa.DeletionTimestamp.IsZero() {
 		// Add finalizer if not present
 		if !controllerutil.ContainsFinalizer(kpa, finalizerName) {

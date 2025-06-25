@@ -72,7 +72,7 @@ make deploy IMG=<your-registry>/kpodautoscaler:tag
 ### Basic Example
 
 ```yaml
-apiVersion: autoscaling.io/v1alpha1
+apiVersion: autoscaling.kpodautoscaler.io/v1alpha1
 kind: KPodAutoscaler
 metadata:
   name: example-kpa
@@ -99,7 +99,7 @@ spec:
 ### Advanced Example with Multiple Metrics
 
 ```yaml
-apiVersion: autoscaling.io/v1alpha1
+apiVersion: autoscaling.kpodautoscaler.io/v1alpha1
 kind: KPodAutoscaler
 metadata:
   name: advanced-kpa
