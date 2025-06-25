@@ -1,0 +1,41 @@
+1. Get the application status by running these commands:
+   kubectl get deployments -l "app.kubernetes.io/name={{ include "kpodautoscaler.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -n {{ .Release.Namespace }}
+   kubectl get pods -l "app.kubernetes.io/name={{ include "kpodautoscaler.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -n {{ .Release.Namespace }}
+
+2. Check the controller logs:
+   kubectl logs -l "app.kubernetes.io/name={{ include "kpodautoscaler.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -n {{ .Release.Namespace }}
+
+3. Verify CRDs are installed:
+   kubectl get crd kpodautoscalers.autoscaling.kpodautoscaler.io
+
+{{- if .Values.controller.metrics.enabled }}
+
+4. Access metrics:
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "kpodautoscaler.fullname" . }}-controller-manager-metrics-service 8080:8080
+   curl http://localhost:8080/metrics
+{{- end }}
+
+5. Create a KPodAutoscaler resource:
+   cat <<EOF | kubectl apply -f -
+   apiVersion: autoscaling.kpodautoscaler.io/v1alpha1
+   kind: KPodAutoscaler
+   metadata:
+     name: example-kpa
+     namespace: default
+   spec:
+     scaleTargetRef:
+       apiVersion: apps/v1
+       kind: Deployment
+       name: example-deployment
+     minReplicas: 1
+     maxReplicas: 10
+     metrics:
+     - type: Resource
+       resource:
+         name: cpu
+         target:
+           type: Utilization
+           averageUtilization: 50
+   EOF
+
+For more information, visit: {{ .Values.home | default "https://github.com/yourusername/kpodautoscaler" }} 

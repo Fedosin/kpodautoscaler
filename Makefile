@@ -124,6 +124,52 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
+##@ Helm
+
+HELM ?= helm
+HELM_CHART_DIR ?= helm/kpodautoscaler
+HELM_RELEASE_NAME ?= kpodautoscaler
+HELM_NAMESPACE ?= kpodautoscaler-system
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart
+	$(HELM) lint $(HELM_CHART_DIR)
+
+.PHONY: helm-template
+helm-template: ## Render Helm chart templates locally and display the output
+	$(HELM) template $(HELM_RELEASE_NAME) $(HELM_CHART_DIR) --namespace $(HELM_NAMESPACE) --create-namespace
+
+.PHONY: helm-install
+helm-install: docker-build docker-push ## Install the Helm chart
+	$(HELM) install $(HELM_RELEASE_NAME) $(HELM_CHART_DIR) \
+		--namespace $(HELM_NAMESPACE) \
+		--create-namespace \
+		--set image.repository=$(IMG) \
+		--set image.tag=latest
+
+.PHONY: helm-upgrade
+helm-upgrade: docker-build docker-push ## Upgrade the Helm release
+	$(HELM) upgrade $(HELM_RELEASE_NAME) $(HELM_CHART_DIR) \
+		--namespace $(HELM_NAMESPACE) \
+		--set image.repository=$(IMG) \
+		--set image.tag=latest
+
+.PHONY: helm-uninstall
+helm-uninstall: ## Uninstall the Helm release
+	$(HELM) uninstall $(HELM_RELEASE_NAME) --namespace $(HELM_NAMESPACE)
+
+.PHONY: helm-package
+helm-package: ## Package the Helm chart
+	$(HELM) package $(HELM_CHART_DIR)
+
+.PHONY: helm-docs
+helm-docs: ## Generate Helm chart documentation (requires helm-docs tool)
+	@if command -v helm-docs >/dev/null 2>&1; then \
+		helm-docs --chart-search-root=$(HELM_CHART_DIR); \
+	else \
+		echo "helm-docs is not installed. Install it from https://github.com/norwoodj/helm-docs"; \
+	fi
+
 ##@ Build Dependencies
 
 ## Location to install dependencies to

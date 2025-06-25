@@ -1,0 +1,34 @@
+apiVersion: v2
+name: kpodautoscaler
+description: A Helm chart for KPodAutoscaler - Advanced Kubernetes Pod Autoscaler
+
+type: application
+
+# This is the chart version. This version number should be incremented each time you make changes
+# to the chart and its templates, including the app version.
+version: 0.1.0
+
+# This is the version number of the application being deployed. This version number should be
+# incremented each time you make changes to the application.
+appVersion: "0.1.0"
+
+keywords:
+  - autoscaling
+  - kubernetes
+  - hpa
+  - kpa
+
+home: https://github.com/yourusername/kpodautoscaler
+sources:
+  - https://github.com/yourusername/kpodautoscaler
+
+maintainers:
+  - name: Your Name
+    email: your.email@example.com
+
+# A list of annotations keyed by name (optional).
+annotations:
+  # Helm OCI annotations
+  "artifacthub.io/operator": "true"
+  "artifacthub.io/operatorCapabilities": "Basic Install"
+  "artifacthub.io/prerelease": "false" 

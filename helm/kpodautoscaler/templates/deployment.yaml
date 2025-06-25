@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kpodautoscaler.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kpodautoscaler.labels" . | nindent 4 }}
+    control-plane: controller-manager
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kpodautoscaler.selectorLabels" . | nindent 6 }}
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "kpodautoscaler.selectorLabels" . | nindent 8 }}
+        control-plane: controller-manager
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "kpodautoscaler.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: manager
+        image: {{ include "kpodautoscaler.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /manager
+        args:
+        {{- if .Values.controller.leaderElection.enabled }}
+        - --leader-elect
+        - --leader-election-id={{ .Values.controller.leaderElection.resourceName }}
+        - --leader-election-namespace={{ include "kpodautoscaler.leaderElectionNamespace" . }}
+        {{- end }}
+        {{- if .Values.controller.metrics.enabled }}
+        - --metrics-bind-addr={{ .Values.controller.metrics.bindAddress }}
+        {{- if .Values.controller.metrics.secure }}
+        - --metrics-secure
+        {{- end }}
+        {{- end }}
+        - --health-probe-bind-addr={{ .Values.controller.healthProbe.bindAddress }}
+        {{- if .Values.controller.webhook.enabled }}
+        - --webhook-port={{ .Values.controller.webhook.port }}
+        - --webhook-cert-dir={{ .Values.controller.webhook.certDir }}
+        {{- end }}
+        {{- if eq .Values.controller.logLevel "debug" }}
+        - --zap-devel
+        {{- end }}
+        - --zap-log-level={{ .Values.controller.logLevel }}
+        {{- if .Values.controller.development }}
+        - --zap-encoder=console
+        {{- end }}
+        env:
+        - name: KUBERNETES_CLUSTER_DOMAIN
+          value: cluster.local
+        {{- with .Values.extraEnvVars }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        ports:
+        {{- if .Values.controller.metrics.enabled }}
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        {{- end }}
+        - name: health
+          containerPort: 8081
+          protocol: TCP
+        {{- if .Values.controller.webhook.enabled }}
+        - name: webhook
+          containerPort: {{ .Values.controller.webhook.port }}
+          protocol: TCP
+        {{- end }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        {{- with .Values.extraVolumeMounts }}
+        volumeMounts:
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10 

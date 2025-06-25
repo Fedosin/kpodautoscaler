@@ -1,0 +1,152 @@
+# Default values for kpodautoscaler.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# -- Number of controller replicas
+replicaCount: 1
+
+image:
+  # -- Image repository
+  repository: controller
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+# -- Image pull secrets
+imagePullSecrets: []
+
+# -- Override the name of the chart
+nameOverride: ""
+# -- Override the fullname of the chart
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Specifies whether a service account should be created
+  create: true
+  # -- Annotations to add to the service account
+  annotations: {}
+  # -- The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# -- Pod annotations
+podAnnotations: {}
+
+# -- Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+
+# -- Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+
+# -- Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 64Mi
+
+# -- Node selector
+nodeSelector: {}
+
+# -- Tolerations
+tolerations: []
+
+# -- Affinity rules
+affinity: {}
+
+# Controller configuration
+controller:
+  # -- Enable leader election for controller manager
+  leaderElection:
+    enabled: true
+    # -- Leader election resource name
+    resourceName: kpodautoscaler-leader-election
+    # -- Leader election resource namespace (defaults to release namespace)
+    resourceNamespace: ""
+  
+  # -- Metrics configuration
+  metrics:
+    # -- Enable metrics endpoint
+    enabled: true
+    # -- Metrics bind address
+    bindAddress: ":8080"
+    # -- Enable secure metrics
+    secure: false
+  
+  # -- Health probe configuration
+  healthProbe:
+    # -- Health probe bind address
+    bindAddress: ":8081"
+  
+  # -- Webhook configuration
+  webhook:
+    # -- Enable webhook
+    enabled: false
+    # -- Webhook port
+    port: 9443
+    # -- Webhook cert directory
+    certDir: "/tmp/k8s-webhook-server/serving-certs"
+  
+  # -- Log level (debug, info, error)
+  logLevel: info
+  
+  # -- Enable development mode
+  development: false
+
+# Monitoring configuration
+monitoring:
+  # -- Enable ServiceMonitor for Prometheus
+  serviceMonitor:
+    enabled: false
+    # -- ServiceMonitor labels
+    labels: {}
+    # -- ServiceMonitor interval
+    interval: 30s
+    # -- ServiceMonitor scrape timeout
+    scrapeTimeout: 10s
+
+# -- Extra environment variables
+extraEnvVars: []
+# Example:
+# - name: EXAMPLE_VAR
+#   value: "example-value"
+
+# -- Extra volumes
+extraVolumes: []
+# Example:
+# - name: extra-volume
+#   configMap:
+#     name: extra-configmap
+
+# -- Extra volume mounts
+extraVolumeMounts: []
+# Example:
+# - name: extra-volume
+#   mountPath: /etc/extra
+
+# RBAC configuration
+rbac:
+  # -- Create RBAC resources
+  create: true
+
+# CRD configuration
+crds:
+  # -- Install CRDs
+  install: true
+  # -- Keep CRDs on chart uninstall
+  keep: true
+  # -- Annotations to add to CRDs
+  annotations: {}
+    # "helm.sh/resource-policy": keep 
