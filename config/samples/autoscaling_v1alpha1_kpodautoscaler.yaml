@@ -1,0 +1,9 @@
+apiVersion: autoscaling.kpodautoscaler.io/v1alpha1
+kind: KPodAutoscaler
+metadata:
+  labels:
+    app.kubernetes.io/name: kpodautoscaler
+    app.kubernetes.io/managed-by: kustomize
+  name: kpodautoscaler-sample
+spec:
+  # TODO(user): Add fields here

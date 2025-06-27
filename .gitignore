@@ -4,110 +4,24 @@
 *.dll
 *.so
 *.dylib
+bin/*
+Dockerfile.cross
 
-# Go build artifacts
-bin/
+# Test binary, built with `go test -c`
 *.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# Go module and dependency management
-vendor/
-go.sum.backup
+# Go workspace file
+go.work
 
-# Test coverage
-coverage.txt
-coverage.html
-*.cover
-*.coverprofile
+# Kubernetes Generated files - skip generated files, except for vendored files
+!vendor/**/zz_generated.*
 
-# Kubernetes generated files
-config/crd/bases
-config/rbac/role.yaml
-config/rbac/role_binding.yaml
-config/manager/controller_manager_config.yaml
-config/webhook
-config/certmanager
-manifests/
-
-# Controller-runtime artifacts
-testbin/
-hack/tools/bin/
-
-# Temporary files
-*.tmp
-*.temp
+# editor and IDE paraphernalia
+.idea
+.vscode
 *.swp
 *.swo
 *~
-.*.swp
-.*.swo
-
-# IDE specific files
-# VSCode
-.vscode/
-*.code-workspace
-
-# IntelliJ IDEA
-.idea/
-*.iml
-*.iws
-*.ipr
-out/
-
-# GoLand
-.goland/
-
-# Vim
-*.vim
-.vim/
-
-# Emacs
-*~
-\#*\#
-.\#*
-
-# OS specific files
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
-
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# Linux
-.directory
-.Trash-*
-
-# Project specific
-/kpodautoscaler
-/manager
-*.log
-*.pid
-
-# Kubernetes artifacts
-kubeconfig
-*.kubeconfig
-.kube/
-
-# Helm charts dependencies
-charts/*/charts/
-charts/*/Chart.lock
-
-# Local environment files
-.env
-.env.local
-.env.*.local
-
-# Debug files
-debug
-debug.test
-*.pprof
-
-# Build directories
-_output/
-_build/
-dist/ 

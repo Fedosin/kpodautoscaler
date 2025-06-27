@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"context"
@@ -40,7 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	autoscalingv1alpha1 "github.com/Fedosin/kpodautoscaler/api/v1alpha1"
-	"github.com/Fedosin/kpodautoscaler/pkg/metrics"
+	"github.com/Fedosin/kpodautoscaler/internal/pkg/metrics"
 )
 
 // KPodAutoscalerReconciler reconciles a KPodAutoscaler object
