@@ -418,15 +418,15 @@ type KPodAutoscalerStatus struct {
 	Conditions []KPodAutoscalerCondition `json:"conditions"`
 }
 
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
-//+kubebuilder:resource:shortName=kpa
-//+kubebuilder:printcolumn:name="Reference",type="string",JSONPath=".spec.scaleTargetRef.name"
-//+kubebuilder:printcolumn:name="Targets",type="string",JSONPath=".status.currentMetrics[0].resource.current.averageUtilization",description="The current metric value"
-//+kubebuilder:printcolumn:name="MinReplicas",type="integer",JSONPath=".spec.minReplicas"
-//+kubebuilder:printcolumn:name="MaxReplicas",type="integer",JSONPath=".spec.maxReplicas"
-//+kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".status.currentReplicas"
-//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=kpa
+// +kubebuilder:printcolumn:name="Reference",type="string",JSONPath=".spec.scaleTargetRef.name"
+// +kubebuilder:printcolumn:name="Targets",type="string",JSONPath=".status.currentMetrics[0].resource.current.averageUtilization",description="The current metric value"
+// +kubebuilder:printcolumn:name="MinReplicas",type="integer",JSONPath=".spec.minReplicas"
+// +kubebuilder:printcolumn:name="MaxReplicas",type="integer",JSONPath=".spec.maxReplicas"
+// +kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".status.currentReplicas"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // KPodAutoscaler is the Schema for the kpodautoscalers API
 type KPodAutoscaler struct {
@@ -437,7 +437,7 @@ type KPodAutoscaler struct {
 	Status KPodAutoscalerStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:object:root=true
+// +kubebuilder:object:root=true
 
 // KPodAutoscalerList contains a list of KPodAutoscaler
 type KPodAutoscalerList struct {

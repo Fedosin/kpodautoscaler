@@ -39,7 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	autoscalingv1alpha1 "github.com/Fedosin/kpodautoscaler/api/v1alpha1"
+	kpav1alpha1 "github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 	"github.com/Fedosin/kpodautoscaler/internal/pkg/metrics"
 )
 
@@ -70,25 +70,28 @@ type scalerWorker struct {
 const (
 	stableTimeWindowGranularity = time.Second
 	panicTimeWindowGranularity  = time.Second
+
+	deploymentKind  = "Deployment"
+	statefulSetKind = "StatefulSet"
 )
 
-//+kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers/finalizers,verbs=update
-//+kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;update;patch
-//+kubebuilder:rbac:groups=apps,resources=deployments/scale;statefulsets/scale,verbs=get;update;patch
-//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
-//+kubebuilder:rbac:groups=metrics.k8s.io,resources=pods;nodes,verbs=get;list
-//+kubebuilder:rbac:groups=custom.metrics.k8s.io,resources=*,verbs=get;list
-//+kubebuilder:rbac:groups=external.metrics.k8s.io,resources=*,verbs=get;list
+// +kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers/finalizers,verbs=update
+// +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments/scale;statefulsets/scale,verbs=get;update;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=metrics.k8s.io,resources=pods;nodes,verbs=get;list
+// +kubebuilder:rbac:groups=custom.metrics.k8s.io,resources=*,verbs=get;list
+// +kubebuilder:rbac:groups=external.metrics.k8s.io,resources=*,verbs=get;list
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *KPodAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
 	// Fetch the KPodAutoscaler instance
-	kpa := &autoscalingv1alpha1.KPodAutoscaler{}
+	kpa := &kpav1alpha1.KPodAutoscaler{}
 	err := r.Get(ctx, req.NamespacedName, kpa)
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -131,14 +134,14 @@ func (r *KPodAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Check for recommendations
 	select {
 	case desiredReplicas := <-worker.recommendations:
-		log.Info("Received scaling recommendation", "desiredReplicas", desiredReplicas)
+		logger.Info("Received scaling recommendation", "desiredReplicas", desiredReplicas)
 
 		// Update the target resource
 		if err := r.scaleTarget(ctx, kpa, desiredReplicas); err != nil {
-			log.Error(err, "Failed to scale target")
+			logger.Error(err, "Failed to scale target")
 			err = r.updateStatus(ctx, kpa, err)
 			if err != nil {
-				log.Error(err, "Failed to update status")
+				logger.Error(err, "Failed to update status")
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, err
@@ -146,7 +149,7 @@ func (r *KPodAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 		// Update status
 		if err := r.updateStatus(ctx, kpa, nil); err != nil {
-			log.Error(err, "Failed to update status")
+			logger.Error(err, "Failed to update status")
 			return ctrl.Result{}, err
 		}
 
@@ -160,7 +163,7 @@ func (r *KPodAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 }
 
 // ensureWorker ensures a worker goroutine is running for the given KPA
-func (r *KPodAutoscalerReconciler) ensureWorker(key types.NamespacedName, kpa *autoscalingv1alpha1.KPodAutoscaler) *scalerWorker {
+func (r *KPodAutoscalerReconciler) ensureWorker(key types.NamespacedName, kpa *kpav1alpha1.KPodAutoscaler) *scalerWorker {
 	r.workersMu.Lock()
 	defer r.workersMu.Unlock()
 
@@ -203,10 +206,10 @@ func (r *KPodAutoscalerReconciler) stopWorker(key types.NamespacedName) {
 }
 
 // run is the main loop for a scaler worker
-func (w *scalerWorker) run(kpa *autoscalingv1alpha1.KPodAutoscaler) {
-	log := ctrl.Log.WithName("worker").WithValues("kpa", w.kpaKey)
-	log.Info("Starting scaler worker")
-	defer log.Info("Stopping scaler worker")
+func (w *scalerWorker) run(kpa *kpav1alpha1.KPodAutoscaler) {
+	logger := ctrl.Log.WithName("worker").WithValues("kpa", w.kpaKey)
+	logger.Info("Starting scaler worker")
+	defer logger.Info("Stopping scaler worker")
 
 	// Create metric collectors for each metric spec
 	collectors := make([]*metricCollector, 0, len(kpa.Spec.Metrics))
@@ -225,19 +228,19 @@ func (w *scalerWorker) run(kpa *autoscalingv1alpha1.KPodAutoscaler) {
 			return
 		case <-ticker.C:
 			// Fetch current KPA
-			currentKPA := &autoscalingv1alpha1.KPodAutoscaler{}
+			currentKPA := &kpav1alpha1.KPodAutoscaler{}
 			if err := w.reconciler.Get(w.ctx, w.kpaKey, currentKPA); err != nil {
 				if errors.IsNotFound(err) {
 					return // KPA was deleted
 				}
-				log.Error(err, "Failed to get KPA")
+				logger.Error(err, "Failed to get KPA")
 				continue
 			}
 
 			// Get current replicas
 			currentReplicas, err := w.getCurrentReplicas(currentKPA)
 			if err != nil {
-				log.Error(err, "Failed to get current replicas")
+				logger.Error(err, "Failed to get current replicas")
 				continue
 			}
 
@@ -246,7 +249,7 @@ func (w *scalerWorker) run(kpa *autoscalingv1alpha1.KPodAutoscaler) {
 			for _, collector := range collectors {
 				recommendation, err := collector.collectAndRecommend(w.ctx, currentReplicas)
 				if err != nil {
-					log.Error(err, "Failed to collect metric", "metric", collector.metricSpec.Type)
+					logger.Error(err, "Failed to collect metric", "metric", collector.metricSpec.Type)
 					continue
 				}
 
@@ -269,7 +272,7 @@ func (w *scalerWorker) run(kpa *autoscalingv1alpha1.KPodAutoscaler) {
 			if desiredReplicas != currentReplicas {
 				select {
 				case w.recommendations <- desiredReplicas:
-					log.Info("Sent scaling recommendation", "current", currentReplicas, "desired", desiredReplicas)
+					logger.Info("Sent scaling recommendation", "current", currentReplicas, "desired", desiredReplicas)
 				default:
 					// Channel is full, skip this recommendation
 				}
@@ -279,9 +282,9 @@ func (w *scalerWorker) run(kpa *autoscalingv1alpha1.KPodAutoscaler) {
 }
 
 // getCurrentReplicas gets the current replica count of the target resource
-func (w *scalerWorker) getCurrentReplicas(kpa *autoscalingv1alpha1.KPodAutoscaler) (int32, error) {
+func (w *scalerWorker) getCurrentReplicas(kpa *kpav1alpha1.KPodAutoscaler) (int32, error) {
 	switch kpa.Spec.ScaleTargetRef.Kind {
-	case "Deployment":
+	case deploymentKind:
 		deployment := &appsv1.Deployment{}
 		key := types.NamespacedName{
 			Namespace: kpa.Namespace,
@@ -295,7 +298,7 @@ func (w *scalerWorker) getCurrentReplicas(kpa *autoscalingv1alpha1.KPodAutoscale
 		}
 		return 1, nil
 
-	case "StatefulSet":
+	case statefulSetKind:
 		statefulSet := &appsv1.StatefulSet{}
 		key := types.NamespacedName{
 			Namespace: kpa.Namespace,
@@ -316,8 +319,8 @@ func (w *scalerWorker) getCurrentReplicas(kpa *autoscalingv1alpha1.KPodAutoscale
 
 // metricCollector collects metrics and provides scaling recommendations
 type metricCollector struct {
-	metricSpec    autoscalingv1alpha1.MetricSpec
-	kpa           *autoscalingv1alpha1.KPodAutoscaler
+	metricSpec    kpav1alpha1.MetricSpec
+	kpa           *kpav1alpha1.KPodAutoscaler
 	metricsClient *metrics.MetricsClient
 	stableWindow  libkpaapi.MetricAggregator
 	panicWindow   libkpaapi.MetricAggregator
@@ -325,7 +328,7 @@ type metricCollector struct {
 }
 
 // newMetricCollector creates a new metric collector
-func newMetricCollector(spec autoscalingv1alpha1.MetricSpec, kpa *autoscalingv1alpha1.KPodAutoscaler, client *metrics.MetricsClient) *metricCollector {
+func newMetricCollector(spec kpav1alpha1.MetricSpec, kpa *kpav1alpha1.KPodAutoscaler, metricsClient *metrics.MetricsClient) *metricCollector {
 	// Get metric config
 	config := spec.Config
 
@@ -406,14 +409,14 @@ func newMetricCollector(spec autoscalingv1alpha1.MetricSpec, kpa *autoscalingv1a
 		ScaleDownDelay:      scaleDownDelay,
 		MinScale:            int32(kpa.Spec.MinReplicas.Value()),
 		MaxScale:            int32(kpa.Spec.MaxReplicas.Value()),
-		ActivationScale:     int32(activationScale),
+		ActivationScale:     activationScale,
 		// ScaleToZeroGracePeriod: kpa.Spec.ScaleToZeroGracePeriod,
 	}
 
 	return &metricCollector{
 		metricSpec:    spec,
 		kpa:           kpa,
-		metricsClient: client,
+		metricsClient: metricsClient,
 		stableWindow:  stableWindow,
 		panicWindow:   panicWindow,
 
@@ -505,7 +508,7 @@ func (mc *metricCollector) collectResourceMetric(ctx context.Context) (float64, 
 	target := mc.metricSpec.Resource.Target
 
 	switch target.Type {
-	case "Utilization":
+	case kpav1alpha1.UtilizationMetricType:
 		if target.AverageUtilization == nil {
 			return 0, 0, fmt.Errorf("averageUtilization is nil")
 		}
@@ -524,13 +527,13 @@ func (mc *metricCollector) collectResourceMetric(ctx context.Context) (float64, 
 		avgRequests := float64(totalRequests) / float64(len(pods)) / 1000.0
 		targetValue = avgRequests * float64(*target.AverageUtilization) / 100.0
 
-	case "AverageValue":
+	case kpav1alpha1.AverageValueMetricType:
 		if target.AverageValue == nil {
 			return 0, 0, fmt.Errorf("averageValue is nil")
 		}
 		targetValue = float64(target.AverageValue.MilliValue()) / 1000.0
 
-	case "Value":
+	case kpav1alpha1.ValueMetricType:
 		return 0, 0, fmt.Errorf("value target type not supported for resource metrics")
 
 	default:
@@ -556,7 +559,7 @@ func (mc *metricCollector) collectPodsMetric(ctx context.Context) (float64, floa
 		return 0, 0, fmt.Errorf("no pods found for target")
 	}
 
-	metricIdentifier := autoscalingv1alpha1.MetricIdentifier{
+	metricIdentifier := kpav1alpha1.MetricIdentifier{
 		Name:     mc.metricSpec.Pods.Metric.Name,
 		Selector: mc.metricSpec.Pods.Metric.Selector,
 	}
@@ -580,7 +583,7 @@ func (mc *metricCollector) collectPodsMetric(ctx context.Context) (float64, floa
 	var targetValue float64
 
 	switch target.Type {
-	case "AverageValue":
+	case kpav1alpha1.AverageValueMetricType:
 		if target.AverageValue == nil {
 			return 0, 0, fmt.Errorf("averageValue is nil")
 		}
@@ -599,7 +602,7 @@ func (mc *metricCollector) collectObjectMetric(ctx context.Context) (float64, fl
 		return 0, 0, fmt.Errorf("object metric spec is nil")
 	}
 
-	metricIdentifier := autoscalingv1alpha1.MetricIdentifier{
+	metricIdentifier := kpav1alpha1.MetricIdentifier{
 		Name:     mc.metricSpec.Object.Metric.Name,
 		Selector: mc.metricSpec.Object.Metric.Selector,
 	}
@@ -622,13 +625,13 @@ func (mc *metricCollector) collectObjectMetric(ctx context.Context) (float64, fl
 	var targetValue float64
 
 	switch target.Type {
-	case "Value":
+	case kpav1alpha1.ValueMetricType:
 		if target.Value == nil {
 			return 0, 0, fmt.Errorf("value is nil")
 		}
 		targetValue = float64(target.Value.MilliValue()) / 1000.0
 
-	case "AverageValue":
+	case kpav1alpha1.AverageValueMetricType:
 		if target.AverageValue == nil {
 			return 0, 0, fmt.Errorf("averageValue is nil")
 		}
@@ -660,7 +663,7 @@ func (mc *metricCollector) collectExternalMetric(ctx context.Context) (float64, 
 		return 0, 0, fmt.Errorf("external metric spec is nil")
 	}
 
-	metricIdentifier := autoscalingv1alpha1.MetricIdentifier{
+	metricIdentifier := kpav1alpha1.MetricIdentifier{
 		Name:     mc.metricSpec.External.Metric.Name,
 		Selector: mc.metricSpec.External.Metric.Selector,
 	}
@@ -680,7 +683,7 @@ func (mc *metricCollector) collectExternalMetric(ctx context.Context) (float64, 
 	var currentValue, targetValue float64
 
 	switch target.Type {
-	case "Value":
+	case kpav1alpha1.ValueMetricType:
 		// Sum all values
 		var sum int64
 		for _, v := range values {
@@ -693,7 +696,7 @@ func (mc *metricCollector) collectExternalMetric(ctx context.Context) (float64, 
 		}
 		targetValue = float64(target.Value.MilliValue()) / 1000.0
 
-	case "AverageValue":
+	case kpav1alpha1.AverageValueMetricType:
 		// Average all values
 		var sum int64
 		for _, v := range values {
@@ -721,7 +724,7 @@ func (mc *metricCollector) getTargetPods(ctx context.Context) ([]corev1.Pod, err
 	var selector client.MatchingLabels
 
 	switch mc.kpa.Spec.ScaleTargetRef.Kind {
-	case "Deployment":
+	case deploymentKind:
 		deployment := &appsv1.Deployment{}
 		key := types.NamespacedName{
 			Namespace: mc.kpa.Namespace,
@@ -732,7 +735,7 @@ func (mc *metricCollector) getTargetPods(ctx context.Context) ([]corev1.Pod, err
 		}
 		selector = deployment.Spec.Selector.MatchLabels
 
-	case "StatefulSet":
+	case statefulSetKind:
 		statefulSet := &appsv1.StatefulSet{}
 		key := types.NamespacedName{
 			Namespace: mc.kpa.Namespace,
@@ -765,9 +768,9 @@ func (mc *metricCollector) getTargetPods(ctx context.Context) ([]corev1.Pod, err
 }
 
 // scaleTarget updates the target resource with the desired replica count
-func (r *KPodAutoscalerReconciler) scaleTarget(ctx context.Context, kpa *autoscalingv1alpha1.KPodAutoscaler, desiredReplicas int32) error {
+func (r *KPodAutoscalerReconciler) scaleTarget(ctx context.Context, kpa *kpav1alpha1.KPodAutoscaler, desiredReplicas int32) error {
 	switch kpa.Spec.ScaleTargetRef.Kind {
-	case "Deployment":
+	case deploymentKind:
 		scale := &autoscalingv1.Scale{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      kpa.Spec.ScaleTargetRef.Name,
@@ -791,7 +794,7 @@ func (r *KPodAutoscalerReconciler) scaleTarget(ctx context.Context, kpa *autosca
 		// Record event
 		r.Recorder.Eventf(kpa, corev1.EventTypeNormal, "SuccessfulRescale", "Scaled deployment to %d replicas", desiredReplicas)
 
-	case "StatefulSet":
+	case statefulSetKind:
 		scale := &autoscalingv1.Scale{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      kpa.Spec.ScaleTargetRef.Name,
@@ -823,11 +826,11 @@ func (r *KPodAutoscalerReconciler) scaleTarget(ctx context.Context, kpa *autosca
 }
 
 // updateStatus updates the KPodAutoscaler status
-func (r *KPodAutoscalerReconciler) updateStatus(ctx context.Context, kpa *autoscalingv1alpha1.KPodAutoscaler, scaleErr error) error {
+func (r *KPodAutoscalerReconciler) updateStatus(ctx context.Context, kpa *kpav1alpha1.KPodAutoscaler, scaleErr error) error {
 	// Get current replicas
 	var currentReplicas int32
 	switch kpa.Spec.ScaleTargetRef.Kind {
-	case "Deployment":
+	case deploymentKind:
 		deployment := &appsv1.Deployment{}
 		key := types.NamespacedName{
 			Namespace: kpa.Namespace,
@@ -844,7 +847,7 @@ func (r *KPodAutoscalerReconciler) updateStatus(ctx context.Context, kpa *autosc
 			currentReplicas = 1
 		}
 
-	case "StatefulSet":
+	case statefulSetKind:
 		statefulSet := &appsv1.StatefulSet{}
 		key := types.NamespacedName{
 			Namespace: kpa.Namespace,
@@ -875,8 +878,8 @@ func (r *KPodAutoscalerReconciler) updateStatus(ctx context.Context, kpa *autosc
 	now := metav1.Now()
 
 	// ScalingActive condition
-	scalingActiveCondition := autoscalingv1alpha1.KPodAutoscalerCondition{
-		Type:               autoscalingv1alpha1.ScalingActive,
+	scalingActiveCondition := kpav1alpha1.KPodAutoscalerCondition{
+		Type:               kpav1alpha1.ScalingActive,
 		Status:             corev1.ConditionTrue,
 		LastTransitionTime: now,
 		Reason:             "ScalingActive",
@@ -889,8 +892,8 @@ func (r *KPodAutoscalerReconciler) updateStatus(ctx context.Context, kpa *autosc
 	}
 
 	// AbleToScale condition
-	ableToScaleCondition := autoscalingv1alpha1.KPodAutoscalerCondition{
-		Type:               autoscalingv1alpha1.AbleToScale,
+	ableToScaleCondition := kpav1alpha1.KPodAutoscalerCondition{
+		Type:               kpav1alpha1.AbleToScale,
 		Status:             corev1.ConditionTrue,
 		LastTransitionTime: now,
 		Reason:             "SucceededGetScale",
@@ -898,7 +901,7 @@ func (r *KPodAutoscalerReconciler) updateStatus(ctx context.Context, kpa *autosc
 	}
 
 	// Update or append conditions
-	conditions := []autoscalingv1alpha1.KPodAutoscalerCondition{scalingActiveCondition, ableToScaleCondition}
+	conditions := []kpav1alpha1.KPodAutoscalerCondition{scalingActiveCondition, ableToScaleCondition}
 	for _, newCond := range conditions {
 		found := false
 		for i, cond := range kpa.Status.Conditions {
@@ -934,6 +937,6 @@ func (r *KPodAutoscalerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&autoscalingv1alpha1.KPodAutoscaler{}).
+		For(&kpav1alpha1.KPodAutoscaler{}).
 		Complete(r)
 }

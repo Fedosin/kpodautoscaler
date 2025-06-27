@@ -94,13 +94,13 @@ func NewCustomMetricsClient() (custommetrics.CustomMetricsClient, error) {
 
 	// Prepare AvailableAPIsGetter and CustomMetricsClient
 	available := custommetrics.NewAvailableAPIsGetter(disco)
-	client := custommetrics.NewForConfig(cfg, mapper, available)
+	customMetricsClient := custommetrics.NewForConfig(cfg, mapper, available)
 
 	// Keep cache fresh:
 	stopCh := make(chan struct{})
 	go custommetrics.PeriodicallyInvalidate(available, 10*time.Minute, stopCh)
 
-	return client, nil
+	return customMetricsClient, nil
 }
 
 // GetResourceMetric gets CPU or memory metrics for pods
