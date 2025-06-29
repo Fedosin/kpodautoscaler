@@ -5,7 +5,7 @@ go 1.24.3
 toolchain go1.24.4
 
 require (
-	github.com/Fedosin/libkpa v0.0.0-20250624124012-fa8806d5ded2
+	github.com/Fedosin/libkpa v0.0.0-20250629160746-0cfb0b81f1e7
 	github.com/go-logr/logr v1.4.2
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1

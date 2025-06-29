@@ -419,13 +419,7 @@ func newMetricCollector(spec kpav1alpha1.MetricSpec, kpa *kpav1alpha1.KPodAutosc
 		metricsClient: metricsClient,
 		stableWindow:  stableWindow,
 		panicWindow:   panicWindow,
-
-		// Note: The second parameter is the number of ready pods we have to pass to the autoscaler.
-		// We need it to decide if we should start the autoscaler in panic mode or not.
-		// 0 or 1 - regular mode, 2 or more - panic mode.
-		// TODO: We need to get the number of ready pods from the target resource or just rewrite
-		// NewSlidingWindowAutoscaler to always start in panic mode.
-		autoscaler: libkpa.NewSlidingWindowAutoscaler(autoscalerConfig, 2),
+		autoscaler:    libkpa.NewSlidingWindowAutoscaler(autoscalerConfig),
 	}
 }
 

@@ -60,18 +60,9 @@ func NewMetricAutoscaler(kpa *v1alpha1.KPodAutoscaler, metric v1alpha1.MetricSpe
 		}
 	}
 
-	// Create the autoscaler
-	// Using initial scale of 1
-	initialScale := int32(1)
-	if metric.Config != nil && metric.Config.ActivationScale > 0 {
-		initialScale = metric.Config.ActivationScale
-	}
-
-	autoscaler := algorithm.NewSlidingWindowAutoscaler(cfg, initialScale)
-
 	return &MetricAutoscaler{
 		Metric:     metric,
-		autoscaler: autoscaler,
+		autoscaler: algorithm.NewSlidingWindowAutoscaler(cfg),
 	}, nil
 }
 
