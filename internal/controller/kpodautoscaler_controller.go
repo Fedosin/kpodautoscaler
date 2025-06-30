@@ -22,14 +22,14 @@ import (
 	"sync"
 	"time"
 
-	libkpa "github.com/Fedosin/libkpa/algorithm"
 	libkpaapi "github.com/Fedosin/libkpa/api"
-	libkpametrics "github.com/Fedosin/libkpa/metrics"
+	libkpamanager "github.com/Fedosin/libkpa/manager"
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	k8sresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -41,6 +41,7 @@ import (
 
 	kpav1alpha1 "github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 	"github.com/Fedosin/kpodautoscaler/internal/pkg/metrics"
+	"github.com/Fedosin/kpodautoscaler/internal/pkg/resourcerequests"
 )
 
 // KPodAutoscalerReconciler reconciles a KPodAutoscaler object
@@ -64,13 +65,10 @@ type scalerWorker struct {
 	kpaKey          types.NamespacedName
 	reconciler      *KPodAutoscalerReconciler
 	recommendations chan int32
+	manager         *libkpamanager.Manager
 }
 
-// TODO: make these configurable
 const (
-	stableTimeWindowGranularity = time.Second
-	panicTimeWindowGranularity  = time.Second
-
 	deploymentKind  = "Deployment"
 	statefulSetKind = "StatefulSet"
 )
@@ -193,30 +191,30 @@ func (r *KPodAutoscalerReconciler) ensureWorker(key types.NamespacedName, kpa *k
 	return worker
 }
 
-// stopWorker stops the worker goroutine for the given KPA
-func (r *KPodAutoscalerReconciler) stopWorker(key types.NamespacedName) {
-	r.workersMu.Lock()
-	defer r.workersMu.Unlock()
-
-	if worker, exists := r.scalerWorkers[key]; exists {
-		worker.cancel()
-		close(worker.recommendations)
-		delete(r.scalerWorkers, key)
-	}
-}
-
 // run is the main loop for a scaler worker
 func (w *scalerWorker) run(kpa *kpav1alpha1.KPodAutoscaler) {
 	logger := ctrl.Log.WithName("worker").WithValues("kpa", w.kpaKey)
 	logger.Info("Starting scaler worker")
 	defer logger.Info("Stopping scaler worker")
 
-	// Create metric collectors for each metric spec
-	collectors := make([]*metricCollector, 0, len(kpa.Spec.Metrics))
+	// Create scalers for each metric
+	scalers := []*libkpamanager.Scaler{}
 	for _, metricSpec := range kpa.Spec.Metrics {
-		collector := newMetricCollector(metricSpec, kpa, w.reconciler.MetricsClient)
-		collectors = append(collectors, collector)
+		scaler, err := w.createScaler(metricSpec, kpa.Spec.ScaleTargetRef, kpa.Namespace)
+		if err != nil {
+			logger.Error(err, "Failed to create scaler")
+			continue
+		}
+		scalers = append(scalers, scaler)
 	}
+
+	// Create the manager with min/max replicas and scalers
+	manager := libkpamanager.NewManager(
+		int32(kpa.Spec.MinReplicas.Value()),
+		int32(kpa.Spec.MaxReplicas.Value()),
+		scalers...,
+	)
+	w.manager = manager
 
 	// Create a ticker for metric collection (1 second interval)
 	ticker := time.NewTicker(time.Second)
@@ -244,29 +242,27 @@ func (w *scalerWorker) run(kpa *kpav1alpha1.KPodAutoscaler) {
 				continue
 			}
 
-			// Collect metrics and compute recommendations
-			maxRecommendation := currentReplicas
-			for _, collector := range collectors {
-				recommendation, err := collector.collectAndRecommend(w.ctx, currentReplicas)
+			// Collect metrics and record to manager
+			timestamp := time.Now()
+
+			for i, metricSpec := range currentKPA.Spec.Metrics {
+				metricValue, err := w.collectMetric(w.ctx, metricSpec, currentKPA)
 				if err != nil {
-					logger.Error(err, "Failed to collect metric", "metric", collector.metricSpec.Type)
+					logger.Error(err, "Failed to collect metric", "metric", metricSpec.Type)
 					continue
 				}
 
-				// Take the maximum of all recommendations
-				if recommendation > maxRecommendation {
-					maxRecommendation = recommendation
+				// Record metric to the corresponding scaler in the manager
+				// The manager will internally handle the metric recording
+				if i < len(scalers) {
+					if err := w.manager.Record(getMetricName(metricSpec), metricValue, timestamp); err != nil {
+						logger.Error(err, "Failed to record metric", "metric", metricSpec.Type)
+					}
 				}
 			}
 
-			// Apply min/max constraints
-			desiredReplicas := maxRecommendation
-			if desiredReplicas < int32(currentKPA.Spec.MinReplicas.Value()) {
-				desiredReplicas = int32(currentKPA.Spec.MinReplicas.Value())
-			}
-			if desiredReplicas > int32(currentKPA.Spec.MaxReplicas.Value()) {
-				desiredReplicas = int32(currentKPA.Spec.MaxReplicas.Value())
-			}
+			// Get recommendation from manager
+			desiredReplicas := w.manager.Scale(currentReplicas, timestamp)
 
 			// Send recommendation if different from current
 			if desiredReplicas != currentReplicas {
@@ -279,6 +275,121 @@ func (w *scalerWorker) run(kpa *kpav1alpha1.KPodAutoscaler) {
 			}
 		}
 	}
+}
+
+// collectMetric collects the current metric value
+func (w *scalerWorker) collectMetric(ctx context.Context, metricSpec kpav1alpha1.MetricSpec, kpa *kpav1alpha1.KPodAutoscaler) (float64, error) {
+	switch metricSpec.Type {
+	case kpav1alpha1.ResourceMetricType:
+		return w.collectResourceMetric(ctx, metricSpec.Resource, kpa)
+	case kpav1alpha1.PodsMetricType:
+		return w.collectPodsMetric(ctx, metricSpec.Pods, kpa)
+	case kpav1alpha1.ObjectMetricType:
+		return w.collectObjectMetric(ctx, metricSpec.Object, kpa)
+	case kpav1alpha1.ExternalMetricType:
+		return w.collectExternalMetric(ctx, metricSpec.External, kpa)
+	default:
+		return 0, fmt.Errorf("unknown metric type: %s", metricSpec.Type)
+	}
+}
+
+// collectResourceMetric collects CPU or memory metrics
+func (w *scalerWorker) collectResourceMetric(ctx context.Context, resource *kpav1alpha1.ResourceMetricSource, kpa *kpav1alpha1.KPodAutoscaler) (float64, error) {
+	if resource == nil {
+		return 0, fmt.Errorf("resource metric spec is nil")
+	}
+
+	// Get pods for the target
+	pods, err := w.getTargetPods(ctx, kpa)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(pods) == 0 {
+		return 0, fmt.Errorf("no pods found for target")
+	}
+
+	// Collect resource metrics
+	values, err := w.reconciler.MetricsClient.GetResourceMetric(ctx, pods, resource.Name)
+	if err != nil {
+		return 0, err
+	}
+
+	// Calculate average
+	var sum int64
+	for _, v := range values {
+		sum += v.MilliValue()
+	}
+	avgMilliValue := sum / int64(len(values))
+	avgValue := float64(avgMilliValue) / 1000.0
+
+	// For utilization metrics, convert to percentage
+	if resource.Target.Type == kpav1alpha1.UtilizationMetricType {
+		// Get total requested resources
+		var totalRequests int64
+		for _, pod := range pods {
+			for _, container := range pod.Spec.Containers {
+				if req, found := container.Resources.Requests[resource.Name]; found {
+					totalRequests += req.MilliValue()
+				}
+			}
+		}
+		if totalRequests > 0 {
+			avgRequests := float64(totalRequests) / float64(len(pods)) / 1000.0
+			return (avgValue / avgRequests) * 100.0, nil
+		}
+	}
+
+	return avgValue, nil
+}
+
+// getTargetPods returns the pods for the scale target
+func (w *scalerWorker) getTargetPods(ctx context.Context, kpa *kpav1alpha1.KPodAutoscaler) ([]corev1.Pod, error) {
+	// Get selector from target
+	var selector client.MatchingLabels
+
+	switch kpa.Spec.ScaleTargetRef.Kind {
+	case deploymentKind:
+		deployment := &appsv1.Deployment{}
+		key := types.NamespacedName{
+			Namespace: kpa.Namespace,
+			Name:      kpa.Spec.ScaleTargetRef.Name,
+		}
+		if err := w.reconciler.Get(ctx, key, deployment); err != nil {
+			return nil, err
+		}
+		selector = deployment.Spec.Selector.MatchLabels
+
+	case statefulSetKind:
+		statefulSet := &appsv1.StatefulSet{}
+		key := types.NamespacedName{
+			Namespace: kpa.Namespace,
+			Name:      kpa.Spec.ScaleTargetRef.Name,
+		}
+		if err := w.reconciler.Get(ctx, key, statefulSet); err != nil {
+			return nil, err
+		}
+		selector = statefulSet.Spec.Selector.MatchLabels
+
+	default:
+		return nil, fmt.Errorf("unsupported target kind: %s", kpa.Spec.ScaleTargetRef.Kind)
+	}
+
+	// List pods
+	podList := &corev1.PodList{}
+	if err := w.reconciler.MetricsClient.List(ctx, podList, client.InNamespace(kpa.Namespace), selector); err != nil {
+		return nil, err
+	}
+
+	// Filter running pods
+	var runningPods []corev1.Pod
+	for _, pod := range podList.Items {
+		if pod.Status.Phase == corev1.PodRunning {
+			runningPods = append(runningPods, pod)
+		}
+	}
+
+	return runningPods, nil
 }
 
 // getCurrentReplicas gets the current replica count of the target resource
@@ -315,450 +426,6 @@ func (w *scalerWorker) getCurrentReplicas(kpa *kpav1alpha1.KPodAutoscaler) (int3
 	default:
 		return 0, fmt.Errorf("unsupported target kind: %s", kpa.Spec.ScaleTargetRef.Kind)
 	}
-}
-
-// metricCollector collects metrics and provides scaling recommendations
-type metricCollector struct {
-	metricSpec    kpav1alpha1.MetricSpec
-	kpa           *kpav1alpha1.KPodAutoscaler
-	metricsClient *metrics.MetricsClient
-	stableWindow  libkpaapi.MetricAggregator
-	panicWindow   libkpaapi.MetricAggregator
-	autoscaler    *libkpa.SlidingWindowAutoscaler
-}
-
-// newMetricCollector creates a new metric collector
-func newMetricCollector(spec kpav1alpha1.MetricSpec, kpa *kpav1alpha1.KPodAutoscaler, metricsClient *metrics.MetricsClient) *metricCollector {
-	// Get metric config
-	config := spec.Config
-
-	// Apply defaults
-	algorithm := "linear"
-	stableWindowSize := 60 * time.Second
-	panicWindowSize := 6 * time.Second
-	panicThreshold := 2.0
-	scaleDownDelay := 5 * time.Second
-	targetBurstCapacity := 211.0
-	maxScaleUpRate := 1000.0
-	maxScaleDownRate := 2.0
-	targetValue := 0.0
-	totalValue := 0.0
-	activationScale := int32(1)
-
-	if config != nil {
-		if config.AggregationAlgorithm != "" {
-			algorithm = config.AggregationAlgorithm
-		}
-		if config.MaxScaleUpRate != nil {
-			maxScaleUpRate = config.MaxScaleUpRate.AsApproximateFloat64()
-		}
-		if config.MaxScaleDownRate != nil {
-			maxScaleDownRate = config.MaxScaleDownRate.AsApproximateFloat64()
-		}
-		if config.PanicThreshold != nil {
-			panicThreshold = config.PanicThreshold.AsApproximateFloat64()
-		}
-		if config.ScaleDownDelay != 0 {
-			scaleDownDelay = config.ScaleDownDelay
-		}
-		if config.TargetBurstCapacity != nil {
-			targetBurstCapacity = config.TargetBurstCapacity.AsApproximateFloat64()
-		}
-		if config.TargetValue != nil {
-			targetValue = config.TargetValue.AsApproximateFloat64()
-		}
-		if config.TotalValue != nil {
-			totalValue = config.TotalValue.AsApproximateFloat64()
-		}
-		if config.StableWindow != 0 {
-			stableWindowSize = config.StableWindow
-		}
-		if config.PanicWindowPercentage != nil {
-			panicWindowPercentage := config.PanicWindowPercentage.AsApproximateFloat64()
-			panicWindowSize = time.Duration(float64(stableWindowSize) * panicWindowPercentage / 100.0)
-		}
-		if config.PanicThreshold != nil {
-			panicThreshold = config.PanicThreshold.AsApproximateFloat64()
-		}
-		if config.ScaleDownDelay != 0 {
-			scaleDownDelay = config.ScaleDownDelay
-		}
-		if config.ActivationScale != 0 {
-			activationScale = config.ActivationScale
-		}
-	}
-
-	// Create windows based on algorithm
-	var stableWindow, panicWindow libkpaapi.MetricAggregator
-	if algorithm == "weighted" {
-		stableWindow = libkpametrics.NewWeightedTimeWindow(stableWindowSize, stableTimeWindowGranularity)
-		panicWindow = libkpametrics.NewWeightedTimeWindow(panicWindowSize, panicTimeWindowGranularity)
-	} else {
-		stableWindow = libkpametrics.NewTimeWindow(stableWindowSize, stableTimeWindowGranularity)
-		panicWindow = libkpametrics.NewTimeWindow(panicWindowSize, panicTimeWindowGranularity)
-	}
-
-	// Create autoscaler config
-	autoscalerConfig := libkpaapi.AutoscalerConfig{
-		MaxScaleUpRate:      maxScaleUpRate,
-		MaxScaleDownRate:    maxScaleDownRate,
-		TargetValue:         targetValue,
-		TotalValue:          totalValue,
-		TargetBurstCapacity: targetBurstCapacity,
-		PanicThreshold:      panicThreshold,
-		ScaleDownDelay:      scaleDownDelay,
-		MinScale:            int32(kpa.Spec.MinReplicas.Value()),
-		MaxScale:            int32(kpa.Spec.MaxReplicas.Value()),
-		ActivationScale:     activationScale,
-		// ScaleToZeroGracePeriod: kpa.Spec.ScaleToZeroGracePeriod,
-	}
-
-	return &metricCollector{
-		metricSpec:    spec,
-		kpa:           kpa,
-		metricsClient: metricsClient,
-		stableWindow:  stableWindow,
-		panicWindow:   panicWindow,
-		autoscaler:    libkpa.NewSlidingWindowAutoscaler(autoscalerConfig),
-	}
-}
-
-// collectAndRecommend collects metrics and returns a scaling recommendation
-func (mc *metricCollector) collectAndRecommend(ctx context.Context, currentReplicas int32) (int32, error) {
-	timestamp := time.Now()
-
-	// Collect metric value
-	value, _, err := mc.collectMetric(ctx)
-	if err != nil {
-		return currentReplicas, err
-	}
-
-	// Add value to windows
-	mc.stableWindow.Record(timestamp, value)
-	mc.panicWindow.Record(timestamp, value)
-
-	// Get averages
-	stableAvg := mc.stableWindow.WindowAverage(timestamp)
-	panicAvg := mc.panicWindow.WindowAverage(timestamp)
-
-	metricSnapshot := libkpametrics.NewMetricSnapshot(stableAvg, panicAvg, currentReplicas, timestamp)
-
-	recommendation := mc.autoscaler.Scale(metricSnapshot, timestamp)
-	if !recommendation.ScaleValid {
-		return currentReplicas, fmt.Errorf("scale recommendation is not valid")
-	}
-
-	return recommendation.DesiredPodCount, nil
-}
-
-// collectMetric collects the current metric value and target value
-func (mc *metricCollector) collectMetric(ctx context.Context) (float64, float64, error) {
-	switch mc.metricSpec.Type {
-	case "Resource":
-		return mc.collectResourceMetric(ctx)
-	case "Pods":
-		return mc.collectPodsMetric(ctx)
-	case "Object":
-		return mc.collectObjectMetric(ctx)
-	case "External":
-		return mc.collectExternalMetric(ctx)
-	default:
-		return 0, 0, fmt.Errorf("unknown metric type: %s", mc.metricSpec.Type)
-	}
-}
-
-// collectResourceMetric collects CPU or memory metrics
-func (mc *metricCollector) collectResourceMetric(ctx context.Context) (float64, float64, error) {
-	if mc.metricSpec.Resource == nil {
-		return 0, 0, fmt.Errorf("resource metric spec is nil")
-	}
-
-	// Get pods for the target
-	pods, err := mc.getTargetPods(ctx)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	if len(pods) == 0 {
-		return 0, 0, fmt.Errorf("no pods found for target")
-	}
-
-	// Collect resource metrics
-	values, err := mc.metricsClient.GetResourceMetric(ctx, pods, mc.metricSpec.Resource.Name)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	// Calculate average
-	var sum int64
-	for _, v := range values {
-		sum += v.MilliValue()
-	}
-	avgMilliValue := sum / int64(len(values))
-	avgValue := float64(avgMilliValue) / 1000.0
-
-	// Calculate target value based on target type
-	var targetValue float64
-	target := mc.metricSpec.Resource.Target
-
-	switch target.Type {
-	case kpav1alpha1.UtilizationMetricType:
-		if target.AverageUtilization == nil {
-			return 0, 0, fmt.Errorf("averageUtilization is nil")
-		}
-		// For utilization, we need to get the total requested resources
-		var totalRequests int64
-		for _, pod := range pods {
-			for _, container := range pod.Spec.Containers {
-				if req, found := container.Resources.Requests[mc.metricSpec.Resource.Name]; found {
-					totalRequests += req.MilliValue()
-				}
-			}
-		}
-		if totalRequests == 0 {
-			return 0, 0, fmt.Errorf("no resource requests found")
-		}
-		avgRequests := float64(totalRequests) / float64(len(pods)) / 1000.0
-		targetValue = avgRequests * float64(*target.AverageUtilization) / 100.0
-
-	case kpav1alpha1.AverageValueMetricType:
-		if target.AverageValue == nil {
-			return 0, 0, fmt.Errorf("averageValue is nil")
-		}
-		targetValue = float64(target.AverageValue.MilliValue()) / 1000.0
-
-	case kpav1alpha1.ValueMetricType:
-		return 0, 0, fmt.Errorf("value target type not supported for resource metrics")
-
-	default:
-		return 0, 0, fmt.Errorf("unknown target type: %s", target.Type)
-	}
-
-	return avgValue, targetValue, nil
-}
-
-// collectPodsMetric collects custom metrics from pods
-func (mc *metricCollector) collectPodsMetric(ctx context.Context) (float64, float64, error) {
-	if mc.metricSpec.Pods == nil {
-		return 0, 0, fmt.Errorf("pods metric spec is nil")
-	}
-
-	// Get pods for the target
-	pods, err := mc.getTargetPods(ctx)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	if len(pods) == 0 {
-		return 0, 0, fmt.Errorf("no pods found for target")
-	}
-
-	metricIdentifier := kpav1alpha1.MetricIdentifier{
-		Name:     mc.metricSpec.Pods.Metric.Name,
-		Selector: mc.metricSpec.Pods.Metric.Selector,
-	}
-
-	// Collect custom metrics
-	values, err := mc.metricsClient.GetPodsMetric(ctx, mc.kpa.Namespace, metricIdentifier, pods)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	// Calculate average
-	var sum int64
-	for _, v := range values {
-		sum += v.MilliValue()
-	}
-	avgMilliValue := sum / int64(len(values))
-	avgValue := float64(avgMilliValue) / 1000.0
-
-	// Get target value
-	target := mc.metricSpec.Pods.Target
-	var targetValue float64
-
-	switch target.Type {
-	case kpav1alpha1.AverageValueMetricType:
-		if target.AverageValue == nil {
-			return 0, 0, fmt.Errorf("averageValue is nil")
-		}
-		targetValue = float64(target.AverageValue.MilliValue()) / 1000.0
-
-	default:
-		return 0, 0, fmt.Errorf("unsupported target type for pods metric: %s", target.Type)
-	}
-
-	return avgValue, targetValue, nil
-}
-
-// collectObjectMetric collects metrics from a Kubernetes object
-func (mc *metricCollector) collectObjectMetric(ctx context.Context) (float64, float64, error) {
-	if mc.metricSpec.Object == nil {
-		return 0, 0, fmt.Errorf("object metric spec is nil")
-	}
-
-	metricIdentifier := kpav1alpha1.MetricIdentifier{
-		Name:     mc.metricSpec.Object.Metric.Name,
-		Selector: mc.metricSpec.Object.Metric.Selector,
-	}
-
-	// Collect object metric
-	value, err := mc.metricsClient.GetObjectMetric(
-		ctx,
-		mc.kpa.Namespace,
-		mc.metricSpec.Object.DescribedObject,
-		metricIdentifier,
-	)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	currentValue := float64(value.MilliValue()) / 1000.0
-
-	// Get target value
-	target := mc.metricSpec.Object.Target
-	var targetValue float64
-
-	switch target.Type {
-	case kpav1alpha1.ValueMetricType:
-		if target.Value == nil {
-			return 0, 0, fmt.Errorf("value is nil")
-		}
-		targetValue = float64(target.Value.MilliValue()) / 1000.0
-
-	case kpav1alpha1.AverageValueMetricType:
-		if target.AverageValue == nil {
-			return 0, 0, fmt.Errorf("averageValue is nil")
-		}
-		// For object metrics with AverageValue, we divide by current replicas
-		deployment := &appsv1.Deployment{}
-		key := types.NamespacedName{
-			Namespace: mc.kpa.Namespace,
-			Name:      mc.kpa.Spec.ScaleTargetRef.Name,
-		}
-		if err := mc.metricsClient.Get(ctx, key, deployment); err != nil {
-			return 0, 0, err
-		}
-		replicas := int32(1)
-		if deployment.Spec.Replicas != nil {
-			replicas = *deployment.Spec.Replicas
-		}
-		targetValue = float64(target.AverageValue.MilliValue()) / 1000.0 * float64(replicas)
-
-	default:
-		return 0, 0, fmt.Errorf("unsupported target type for object metric: %s", target.Type)
-	}
-
-	return currentValue, targetValue, nil
-}
-
-// collectExternalMetric collects external metrics
-func (mc *metricCollector) collectExternalMetric(ctx context.Context) (float64, float64, error) {
-	if mc.metricSpec.External == nil {
-		return 0, 0, fmt.Errorf("external metric spec is nil")
-	}
-
-	metricIdentifier := kpav1alpha1.MetricIdentifier{
-		Name:     mc.metricSpec.External.Metric.Name,
-		Selector: mc.metricSpec.External.Metric.Selector,
-	}
-
-	// Collect external metric
-	values, err := mc.metricsClient.GetExternalMetric(
-		ctx,
-		mc.kpa.Namespace,
-		metricIdentifier,
-	)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	// Calculate sum or average based on target type
-	target := mc.metricSpec.External.Target
-	var currentValue, targetValue float64
-
-	switch target.Type {
-	case kpav1alpha1.ValueMetricType:
-		// Sum all values
-		var sum int64
-		for _, v := range values {
-			sum += v.MilliValue()
-		}
-		currentValue = float64(sum) / 1000.0
-
-		if target.Value == nil {
-			return 0, 0, fmt.Errorf("value is nil")
-		}
-		targetValue = float64(target.Value.MilliValue()) / 1000.0
-
-	case kpav1alpha1.AverageValueMetricType:
-		// Average all values
-		var sum int64
-		for _, v := range values {
-			sum += v.MilliValue()
-		}
-		if len(values) > 0 {
-			currentValue = float64(sum) / float64(len(values)) / 1000.0
-		}
-
-		if target.AverageValue == nil {
-			return 0, 0, fmt.Errorf("averageValue is nil")
-		}
-		targetValue = float64(target.AverageValue.MilliValue()) / 1000.0
-
-	default:
-		return 0, 0, fmt.Errorf("unsupported target type for external metric: %s", target.Type)
-	}
-
-	return currentValue, targetValue, nil
-}
-
-// getTargetPods returns the pods for the scale target
-func (mc *metricCollector) getTargetPods(ctx context.Context) ([]corev1.Pod, error) {
-	// Get selector from target
-	var selector client.MatchingLabels
-
-	switch mc.kpa.Spec.ScaleTargetRef.Kind {
-	case deploymentKind:
-		deployment := &appsv1.Deployment{}
-		key := types.NamespacedName{
-			Namespace: mc.kpa.Namespace,
-			Name:      mc.kpa.Spec.ScaleTargetRef.Name,
-		}
-		if err := mc.metricsClient.Get(ctx, key, deployment); err != nil {
-			return nil, err
-		}
-		selector = deployment.Spec.Selector.MatchLabels
-
-	case statefulSetKind:
-		statefulSet := &appsv1.StatefulSet{}
-		key := types.NamespacedName{
-			Namespace: mc.kpa.Namespace,
-			Name:      mc.kpa.Spec.ScaleTargetRef.Name,
-		}
-		if err := mc.metricsClient.Get(ctx, key, statefulSet); err != nil {
-			return nil, err
-		}
-		selector = statefulSet.Spec.Selector.MatchLabels
-
-	default:
-		return nil, fmt.Errorf("unsupported target kind: %s", mc.kpa.Spec.ScaleTargetRef.Kind)
-	}
-
-	// List pods
-	podList := &corev1.PodList{}
-	if err := mc.metricsClient.List(ctx, podList, client.InNamespace(mc.kpa.Namespace), selector); err != nil {
-		return nil, err
-	}
-
-	// Filter running pods
-	var runningPods []corev1.Pod
-	for _, pod := range podList.Items {
-		if pod.Status.Phase == corev1.PodRunning {
-			runningPods = append(runningPods, pod)
-		}
-	}
-
-	return runningPods, nil
 }
 
 // scaleTarget updates the target resource with the desired replica count
@@ -933,4 +600,260 @@ func (r *KPodAutoscalerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kpav1alpha1.KPodAutoscaler{}).
 		Complete(r)
+}
+
+// stopWorker stops the worker goroutine for the given KPA
+func (r *KPodAutoscalerReconciler) stopWorker(key types.NamespacedName) {
+	r.workersMu.Lock()
+	defer r.workersMu.Unlock()
+
+	if worker, exists := r.scalerWorkers[key]; exists {
+		worker.cancel()
+		close(worker.recommendations)
+		delete(r.scalerWorkers, key)
+	}
+}
+
+// createScaler creates a scaler for a metric spec
+func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTargetRef kpav1alpha1.ScaleTargetRef, namespace string) (*libkpamanager.Scaler, error) {
+	// Create autoscaler config - min/max scale should come from the parent KPA, not metric config
+	config := libkpaapi.AutoscalerConfig{
+		MaxScaleUpRate:        1000.0,
+		MaxScaleDownRate:      2.0,
+		TargetValue:           0.0,
+		TotalValue:            0.0,
+		TargetBurstCapacity:   211.0,
+		PanicThreshold:        2.0,
+		ScaleDownDelay:        5 * time.Second,
+		ActivationScale:       1,
+		StableWindow:          60 * time.Second,
+		PanicWindowPercentage: 10.0,
+	}
+
+	targetValue := getTargetValueFromMetricSpec(metricSpec)
+	if targetValue == -1.0 {
+		return nil, fmt.Errorf("invalid target value for metric spec")
+	}
+
+	var err error
+
+	// Special case for resource metrics with utilization type
+	if metricSpec.Type == "Resource" && metricSpec.Resource.Target.Type == "Utilization" {
+		var quantity k8sresource.Quantity
+
+		switch scaleTargetRef.Kind {
+		case "Deployment":
+			quantity, err = resourcerequests.GetDeploymentPodResourceRequests(w.ctx, w.reconciler.Client, namespace, scaleTargetRef.Name, metricSpec.Resource.Name)
+			if err != nil {
+				return nil, err
+			}
+		case "StatefulSet":
+			quantity, err = resourcerequests.GetStatefulSetPodResourceRequests(w.ctx, w.reconciler.Client, namespace, scaleTargetRef.Name, metricSpec.Resource.Name)
+			if err != nil {
+				return nil, err
+			}
+		}
+		config.TargetValue = targetValue * float64(quantity.MilliValue()) / 1000.0
+	} else {
+		config.TargetValue = targetValue
+	}
+
+	aggregationAlgorithm := "linear"
+
+	// Apply defaults and config overrides
+	if metricSpec.Config != nil {
+		mc := metricSpec.Config
+
+		// Apply configuration values
+		if mc.MaxScaleUpRate != nil {
+			config.MaxScaleUpRate = mc.MaxScaleUpRate.AsApproximateFloat64()
+		}
+
+		if mc.MaxScaleDownRate != nil {
+			config.MaxScaleDownRate = mc.MaxScaleDownRate.AsApproximateFloat64()
+		}
+
+		if mc.TargetValue != nil {
+			config.TargetValue = mc.TargetValue.AsApproximateFloat64()
+		}
+
+		if mc.TotalValue != nil {
+			config.TotalValue = mc.TotalValue.AsApproximateFloat64()
+		}
+
+		if mc.TargetBurstCapacity != nil {
+			config.TargetBurstCapacity = mc.TargetBurstCapacity.AsApproximateFloat64()
+		}
+
+		if mc.PanicThreshold != nil {
+			config.PanicThreshold = mc.PanicThreshold.AsApproximateFloat64()
+		}
+
+		if mc.ScaleDownDelay != 0 {
+			config.ScaleDownDelay = mc.ScaleDownDelay
+		}
+
+		if mc.ActivationScale != 0 {
+			config.ActivationScale = mc.ActivationScale
+		}
+
+		if mc.StableWindow != 0 {
+			config.StableWindow = mc.StableWindow
+		}
+
+		if mc.PanicWindowPercentage != nil {
+			config.PanicWindowPercentage = mc.PanicWindowPercentage.AsApproximateFloat64()
+		}
+
+		if mc.AggregationAlgorithm != "" {
+			aggregationAlgorithm = mc.AggregationAlgorithm
+		}
+	}
+
+	scaler, err := libkpamanager.NewScaler(getMetricName(metricSpec), config, aggregationAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+
+	return scaler, nil
+}
+
+// collectPodsMetric collects custom pod metrics
+func (w *scalerWorker) collectPodsMetric(ctx context.Context, pods *kpav1alpha1.PodsMetricSource, kpa *kpav1alpha1.KPodAutoscaler) (float64, error) {
+	if pods == nil {
+		return 0, fmt.Errorf("pods metric spec is nil")
+	}
+
+	// Get pods for the target
+	targetPods, err := w.getTargetPods(ctx, kpa)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(targetPods) == 0 {
+		return 0, fmt.Errorf("no pods found for target")
+	}
+
+	metricIdentifier := kpav1alpha1.MetricIdentifier{
+		Name:     pods.Metric.Name,
+		Selector: pods.Metric.Selector,
+	}
+
+	// Collect custom metrics
+	values, err := w.reconciler.MetricsClient.GetPodsMetric(ctx, kpa.Namespace, metricIdentifier, targetPods)
+	if err != nil {
+		return 0, err
+	}
+
+	// Calculate average
+	var sum int64
+	for _, v := range values {
+		sum += v.MilliValue()
+	}
+	avgMilliValue := sum / int64(len(values))
+	avgValue := float64(avgMilliValue) / 1000.0
+
+	return avgValue, nil
+}
+
+// collectObjectMetric collects metrics from a Kubernetes object
+func (w *scalerWorker) collectObjectMetric(ctx context.Context, object *kpav1alpha1.ObjectMetricSource, kpa *kpav1alpha1.KPodAutoscaler) (float64, error) {
+	if object == nil {
+		return 0, fmt.Errorf("object metric spec is nil")
+	}
+
+	metricIdentifier := kpav1alpha1.MetricIdentifier{
+		Name:     object.Metric.Name,
+		Selector: object.Metric.Selector,
+	}
+
+	// Collect object metric
+	value, err := w.reconciler.MetricsClient.GetObjectMetric(
+		ctx,
+		kpa.Namespace,
+		object.DescribedObject,
+		metricIdentifier,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	currentValue := float64(value.MilliValue()) / 1000.0
+	return currentValue, nil
+}
+
+// collectExternalMetric collects external metrics
+func (w *scalerWorker) collectExternalMetric(ctx context.Context, external *kpav1alpha1.ExternalMetricSource, kpa *kpav1alpha1.KPodAutoscaler) (float64, error) {
+	if external == nil {
+		return 0, fmt.Errorf("external metric spec is nil")
+	}
+
+	metricIdentifier := kpav1alpha1.MetricIdentifier{
+		Name:     external.Metric.Name,
+		Selector: external.Metric.Selector,
+	}
+
+	// Collect external metric
+	values, err := w.reconciler.MetricsClient.GetExternalMetric(
+		ctx,
+		kpa.Namespace,
+		metricIdentifier,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	// Calculate sum
+	var sum int64
+	for _, v := range values {
+		sum += v.MilliValue()
+	}
+
+	currentValue := float64(sum) / 1000.0
+	return currentValue, nil
+}
+
+// getMetricName returns the name of the metric
+func getMetricName(metricSpec kpav1alpha1.MetricSpec) string {
+	switch metricSpec.Type {
+	case kpav1alpha1.ResourceMetricType:
+		return string(metricSpec.Resource.Name)
+	case kpav1alpha1.PodsMetricType:
+		return metricSpec.Pods.Metric.Name
+	case kpav1alpha1.ObjectMetricType:
+		return metricSpec.Object.Metric.Name
+	case kpav1alpha1.ExternalMetricType:
+		return metricSpec.External.Metric.Name
+	default:
+		return ""
+	}
+}
+
+// getTargetValue returns the target value for a metric target
+func getTargetValueFromMetricSpec(metricSpec kpav1alpha1.MetricSpec) float64 {
+	switch metricSpec.Type {
+	case kpav1alpha1.ResourceMetricType:
+		return getTargetValue(metricSpec.Resource.Target)
+	case kpav1alpha1.PodsMetricType:
+		return getTargetValue(metricSpec.Pods.Target)
+	case "Object":
+		return getTargetValue(metricSpec.Object.Target)
+	case "External":
+		return getTargetValue(metricSpec.External.Target)
+	default:
+		return -1.0
+	}
+}
+
+// getTargetValue returns the target value for a metric target
+func getTargetValue(metricTarget kpav1alpha1.MetricTarget) float64 {
+	switch metricTarget.Type {
+	case "Utilization":
+		return float64(*metricTarget.AverageUtilization)
+	case "Value":
+		return metricTarget.Value.AsApproximateFloat64()
+	case "AverageValue":
+		return metricTarget.AverageValue.AsApproximateFloat64()
+	}
+	return -1.0
 }
