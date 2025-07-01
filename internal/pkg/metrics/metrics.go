@@ -154,6 +154,9 @@ func (mc *MetricsClient) GetPodsMetric(ctx context.Context, namespace string, me
 	for _, pod := range pods {
 		metricValue, err := metricsIface.GetForObject(groupKind, pod.Name, metric.Name, selector)
 		if err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
 			return nil, fmt.Errorf("error fetching custom metric %q: %v", metric.Name, err)
 		}
 
