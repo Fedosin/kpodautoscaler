@@ -22,6 +22,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -114,6 +115,9 @@ func (mc *MetricsClient) GetResourceMetric(ctx context.Context, pods []corev1.Po
 	for _, pod := range pods {
 		podMetrics, err := mc.mClient.MetricsV1beta1().PodMetricses(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 		if err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
 			return nil, fmt.Errorf("failed to get metrics for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 		}
 

@@ -422,10 +422,10 @@ type KPodAutoscalerStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=kpa
 // +kubebuilder:printcolumn:name="Reference",type="string",JSONPath=".spec.scaleTargetRef.name"
-// +kubebuilder:printcolumn:name="Targets",type="string",JSONPath=".status.currentMetrics[0].resource.current.averageUtilization",description="The current metric value"
-// +kubebuilder:printcolumn:name="MinReplicas",type="integer",JSONPath=".spec.minReplicas"
-// +kubebuilder:printcolumn:name="MaxReplicas",type="integer",JSONPath=".spec.maxReplicas"
+// +kubebuilder:printcolumn:name="MinReplicas",type="string",JSONPath=".spec.minReplicas"
+// +kubebuilder:printcolumn:name="MaxReplicas",type="string",JSONPath=".spec.maxReplicas"
 // +kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".status.currentReplicas"
+// +kubebuilder:printcolumn:name="DesiredReplicas",type="integer",JSONPath=".status.desiredReplicas"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // KPodAutoscaler is the Schema for the kpodautoscalers API

@@ -20,18 +20,17 @@ spec:
     - jsonPath: .spec.scaleTargetRef.name
       name: Reference
       type: string
-    - description: The current metric value
-      jsonPath: .status.currentMetrics[0].resource.current.averageUtilization
-      name: Targets
-      type: string
     - jsonPath: .spec.minReplicas
       name: MinReplicas
-      type: integer
+      type: string
     - jsonPath: .spec.maxReplicas
       name: MaxReplicas
-      type: integer
+      type: string
     - jsonPath: .status.currentReplicas
       name: Replicas
+      type: integer
+    - jsonPath: .status.desiredReplicas
+      name: DesiredReplicas
       type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
