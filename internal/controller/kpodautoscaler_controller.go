@@ -745,6 +745,10 @@ func (w *scalerWorker) collectPodsMetric(ctx context.Context, pods *kpav1alpha1.
 		return 0, err
 	}
 
+	if len(values) == 0 {
+		return 0, fmt.Errorf("no values found for metric")
+	}
+
 	// Calculate average
 	var sum int64
 	for _, v := range values {
