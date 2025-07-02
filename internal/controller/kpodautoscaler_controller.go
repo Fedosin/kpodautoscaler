@@ -156,7 +156,7 @@ func (r *KPodAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	default:
 		// No recommendations available, requeue after a delay
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 	}
 }
 
