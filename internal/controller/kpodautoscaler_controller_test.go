@@ -208,7 +208,7 @@ var _ = Describe("KPodAutoscaler Controller", func() {
 			By("Verifying the KPodAutoscaler properties")
 			Expect(createdKPA.Spec.ScaleTargetRef.Kind).To(Equal("Deployment"))
 			Expect(createdKPA.Spec.ScaleTargetRef.APIVersion).To(Equal("apps/v1"))
-			Expect(len(createdKPA.Spec.Metrics)).To(Equal(1))
+			Expect(createdKPA.Spec.Metrics).To(HaveLen(1))
 			Expect(createdKPA.Spec.Metrics[0].Type).To(Equal(autoscalingv1alpha1.ResourceMetricType))
 			Expect(createdKPA.Spec.Metrics[0].Resource.Name).To(Equal(corev1.ResourceCPU))
 

@@ -60,12 +60,17 @@ type KPodAutoscalerReconciler struct {
 
 // scalerWorker represents a background worker for a single KPA instance
 type scalerWorker struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	kpaKey          types.NamespacedName
-	reconciler      *KPodAutoscalerReconciler
-	recommendations chan int32
-	manager         *libkpamanager.Manager
+	ctx        context.Context
+	cancel     context.CancelFunc
+	kpaKey     types.NamespacedName
+	reconciler *KPodAutoscalerReconciler
+	manager    *libkpamanager.Manager
+	logger     logr.Logger
+	// configUpdate channel for updating worker configuration
+	configUpdate chan *kpav1alpha1.KPodAutoscaler
+	// lastObservedGeneration tracks the last generation this worker has seen
+	lastObservedGeneration int64
+	generationMu           sync.Mutex
 }
 
 const (
@@ -126,42 +131,33 @@ func (r *KPodAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	// Ensure worker is running
-	worker := r.ensureWorker(req.NamespacedName, kpa)
+	// Ensure worker is running or update its configuration
+	worker, isNew := r.ensureWorker(req.NamespacedName, kpa)
 
-	// Check for recommendations
-	select {
-	case desiredReplicas := <-worker.recommendations:
-		logger.Info("Received scaling recommendation", "desiredReplicas", desiredReplicas)
+	// Send configuration update to worker only if it already existed and generation changed
+	if worker != nil && !isNew {
+		// Check if generation has changed
+		worker.generationMu.Lock()
+		lastGen := worker.lastObservedGeneration
+		worker.generationMu.Unlock()
 
-		// Update the target resource
-		if err := r.scaleTarget(ctx, kpa, desiredReplicas); err != nil {
-			logger.Error(err, "Failed to scale target")
-			err = r.updateStatus(ctx, kpa, err)
-			if err != nil {
-				logger.Error(err, "Failed to update status")
-				return ctrl.Result{}, err
+		if kpa.Generation != lastGen {
+			select {
+			case worker.configUpdate <- kpa.DeepCopy():
+				logger.Info("Sent configuration update to worker", "oldGeneration", lastGen, "newGeneration", kpa.Generation)
+			default:
+				// Channel is full, worker will pick up the change on next reconciliation
 			}
-			return ctrl.Result{}, err
 		}
-
-		// Update status
-		if err := r.updateStatus(ctx, kpa, nil); err != nil {
-			logger.Error(err, "Failed to update status")
-			return ctrl.Result{}, err
-		}
-
-		// Requeue to check for more recommendations
-		return ctrl.Result{RequeueAfter: time.Second}, nil
-
-	default:
-		// No recommendations available, requeue after a delay
-		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 	}
+
+	// Worker handles everything else, no need to requeue frequently
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 // ensureWorker ensures a worker goroutine is running for the given KPA
-func (r *KPodAutoscalerReconciler) ensureWorker(key types.NamespacedName, kpa *kpav1alpha1.KPodAutoscaler) *scalerWorker {
+// Returns the worker and whether it's newly created
+func (r *KPodAutoscalerReconciler) ensureWorker(key types.NamespacedName, kpa *kpav1alpha1.KPodAutoscaler) (*scalerWorker, bool) {
 	r.workersMu.Lock()
 	defer r.workersMu.Unlock()
 
@@ -171,49 +167,40 @@ func (r *KPodAutoscalerReconciler) ensureWorker(key types.NamespacedName, kpa *k
 
 	// Check if worker already exists
 	if worker, exists := r.scalerWorkers[key]; exists {
-		return worker
+		return worker, false
 	}
 
 	// Create new worker
 	ctx, cancel := context.WithCancel(context.Background())
 	worker := &scalerWorker{
-		ctx:             ctx,
-		cancel:          cancel,
-		kpaKey:          key,
-		reconciler:      r,
-		recommendations: make(chan int32, 10),
+		ctx:                    ctx,
+		cancel:                 cancel,
+		kpaKey:                 key,
+		reconciler:             r,
+		configUpdate:           make(chan *kpav1alpha1.KPodAutoscaler, 1),
+		logger:                 ctrl.Log.WithName("worker").WithValues("kpa", key),
+		lastObservedGeneration: kpa.Generation,
 	}
 
 	// Start worker goroutine
 	go worker.run(kpa.DeepCopy())
 
 	r.scalerWorkers[key] = worker
-	return worker
+	return worker, true
 }
 
 // run is the main loop for a scaler worker
-func (w *scalerWorker) run(kpa *kpav1alpha1.KPodAutoscaler) {
-	logger := ctrl.Log.WithName("worker").WithValues("kpa", w.kpaKey)
-	logger.Info("Starting scaler worker")
-	defer logger.Info("Stopping scaler worker")
+func (w *scalerWorker) run(initialKPA *kpav1alpha1.KPodAutoscaler) {
+	w.logger.Info("Starting scaler worker")
+	defer w.logger.Info("Stopping scaler worker")
 
-	// Create scalers for each metric
-	scalers := []*libkpamanager.Scaler{}
-	for _, metricSpec := range kpa.Spec.Metrics {
-		scaler, err := w.createScaler(metricSpec, kpa.Spec.ScaleTargetRef, kpa.Namespace)
-		if err != nil {
-			logger.Error(err, "Failed to create scaler")
-			continue
-		}
-		scalers = append(scalers, scaler)
+	// Initialize with the initial KPA configuration
+	currentKPA := initialKPA
+	manager, scalers := w.createManager(currentKPA)
+	if manager == nil {
+		w.logger.Error(fmt.Errorf("failed to create manager"), "Failed to initialize")
+		return
 	}
-
-	// Create the manager with min/max replicas and scalers
-	manager := libkpamanager.NewManager(
-		int32(kpa.Spec.MinReplicas.Value()),
-		int32(kpa.Spec.MaxReplicas.Value()),
-		scalers...,
-	)
 	w.manager = manager
 
 	// Create a ticker for metric collection (1 second interval)
@@ -224,56 +211,297 @@ func (w *scalerWorker) run(kpa *kpav1alpha1.KPodAutoscaler) {
 		select {
 		case <-w.ctx.Done():
 			return
+
+		case newKPA := <-w.configUpdate:
+			// Configuration update received
+			w.logger.Info("Received configuration update")
+			currentKPA = newKPA
+
+			// Update last observed generation
+			w.generationMu.Lock()
+			w.lastObservedGeneration = newKPA.Generation
+			w.generationMu.Unlock()
+
+			// Recreate manager with new configuration
+			newManager, newScalers := w.createManager(currentKPA)
+			if newManager != nil {
+				w.manager = newManager
+				scalers = newScalers
+			}
+
 		case <-ticker.C:
-			// Fetch current KPA
-			currentKPA := &kpav1alpha1.KPodAutoscaler{}
-			if err := w.reconciler.Get(w.ctx, w.kpaKey, currentKPA); err != nil {
+			// Fetch current KPA to ensure we have the latest state
+			latestKPA := &kpav1alpha1.KPodAutoscaler{}
+			if err := w.reconciler.Get(w.ctx, w.kpaKey, latestKPA); err != nil {
 				if errors.IsNotFound(err) {
 					return // KPA was deleted
 				}
-				logger.Error(err, "Failed to get KPA")
+				w.logger.Error(err, "Failed to get KPA")
 				continue
+			}
+
+			// Update internal KPA if generation changed
+			if latestKPA.Generation != currentKPA.Generation {
+				currentKPA = latestKPA
+
+				// Update last observed generation
+				w.generationMu.Lock()
+				w.lastObservedGeneration = latestKPA.Generation
+				w.generationMu.Unlock()
+
+				// Recreate manager with new configuration
+				newManager, newScalers := w.createManager(currentKPA)
+				if newManager != nil {
+					w.manager = newManager
+					scalers = newScalers
+				}
 			}
 
 			// Get current replicas
 			currentReplicas, err := w.getCurrentReplicas(currentKPA)
 			if err != nil {
-				logger.Error(err, "Failed to get current replicas")
+				w.logger.Error(err, "Failed to get current replicas")
+				w.updateStatusWithError(currentKPA, err)
 				continue
 			}
 
 			// Collect metrics and record to manager
 			timestamp := time.Now()
+			metricsCollected := false
 
 			for i, metricSpec := range currentKPA.Spec.Metrics {
 				metricValue, err := w.collectMetric(w.ctx, metricSpec, currentKPA)
 				if err != nil {
-					logger.Error(err, "Failed to collect metric", "metric", metricSpec.Type)
+					w.logger.Error(err, "Failed to collect metric", "metric", metricSpec.Type)
 					continue
 				}
 
 				// Record metric to the corresponding scaler in the manager
-				// The manager will internally handle the metric recording
 				if i < len(scalers) {
 					if err := w.manager.Record(getMetricName(metricSpec), metricValue, timestamp); err != nil {
-						logger.Error(err, "Failed to record metric", "metric", metricSpec.Type)
+						w.logger.Error(err, "Failed to record metric", "metric", metricSpec.Type)
+					} else {
+						metricsCollected = true
 					}
 				}
+			}
+
+			if !metricsCollected {
+				w.logger.Info("No metrics collected, skipping scaling decision")
+				continue
 			}
 
 			// Get recommendation from manager
 			desiredReplicas := w.manager.Scale(currentReplicas, timestamp)
 
-			// Send recommendation if different from current
+			// Perform scaling if needed
 			if desiredReplicas != currentReplicas {
-				select {
-				case w.recommendations <- desiredReplicas:
-					logger.Info("Sent scaling recommendation", "current", currentReplicas, "desired", desiredReplicas)
-				default:
-					// Channel is full, skip this recommendation
+				w.logger.Info("Scaling target", "current", currentReplicas, "desired", desiredReplicas)
+
+				if err := w.scaleTarget(w.ctx, currentKPA, desiredReplicas); err != nil {
+					w.logger.Error(err, "Failed to scale target")
+					w.updateStatusWithError(currentKPA, err)
+					continue
+				}
+
+				// Update status after successful scaling
+				if err := w.updateStatus(w.ctx, currentKPA, nil); err != nil {
+					w.logger.Error(err, "Failed to update status")
 				}
 			}
 		}
+	}
+}
+
+// createManager creates a new manager with scalers for the given KPA
+func (w *scalerWorker) createManager(kpa *kpav1alpha1.KPodAutoscaler) (*libkpamanager.Manager, []*libkpamanager.Scaler) {
+	// Create scalers for each metric
+	scalers := []*libkpamanager.Scaler{}
+	for _, metricSpec := range kpa.Spec.Metrics {
+		scaler, err := w.createScaler(metricSpec, kpa.Spec.ScaleTargetRef, kpa.Namespace)
+		if err != nil {
+			w.logger.Error(err, "Failed to create scaler")
+			continue
+		}
+		scalers = append(scalers, scaler)
+	}
+
+	if len(scalers) == 0 {
+		w.logger.Error(fmt.Errorf("no valid scalers created"), "Failed to create manager")
+		return nil, nil
+	}
+
+	// Create the manager with min/max replicas and scalers
+	manager := libkpamanager.NewManager(
+		int32(kpa.Spec.MinReplicas.Value()),
+		int32(kpa.Spec.MaxReplicas.Value()),
+		scalers...,
+	)
+
+	return manager, scalers
+}
+
+// scaleTarget updates the target resource with the desired replica count
+func (w *scalerWorker) scaleTarget(ctx context.Context, kpa *kpav1alpha1.KPodAutoscaler, desiredReplicas int32) error {
+	switch kpa.Spec.ScaleTargetRef.Kind {
+	case deploymentKind:
+		scale := &autoscalingv1.Scale{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      kpa.Spec.ScaleTargetRef.Name,
+				Namespace: kpa.Namespace,
+			},
+			Spec: autoscalingv1.ScaleSpec{
+				Replicas: desiredReplicas,
+			},
+		}
+
+		// Update scale subresource
+		if err := w.reconciler.SubResource("scale").Update(ctx, &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      kpa.Spec.ScaleTargetRef.Name,
+				Namespace: kpa.Namespace,
+			},
+		}, client.WithSubResourceBody(scale)); err != nil {
+			return err
+		}
+
+		// Record event
+		w.reconciler.Recorder.Eventf(kpa, corev1.EventTypeNormal, "SuccessfulRescale", "Scaled deployment to %d replicas", desiredReplicas)
+
+	case statefulSetKind:
+		scale := &autoscalingv1.Scale{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      kpa.Spec.ScaleTargetRef.Name,
+				Namespace: kpa.Namespace,
+			},
+			Spec: autoscalingv1.ScaleSpec{
+				Replicas: desiredReplicas,
+			},
+		}
+
+		// Update scale subresource
+		if err := w.reconciler.SubResource("scale").Update(ctx, &appsv1.StatefulSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      kpa.Spec.ScaleTargetRef.Name,
+				Namespace: kpa.Namespace,
+			},
+		}, client.WithSubResourceBody(scale)); err != nil {
+			return err
+		}
+
+		// Record event
+		w.reconciler.Recorder.Eventf(kpa, corev1.EventTypeNormal, "SuccessfulRescale", "Scaled statefulset to %d replicas", desiredReplicas)
+
+	default:
+		return fmt.Errorf("unsupported target kind: %s", kpa.Spec.ScaleTargetRef.Kind)
+	}
+
+	return nil
+}
+
+// updateStatus updates the KPodAutoscaler status
+func (w *scalerWorker) updateStatus(ctx context.Context, kpa *kpav1alpha1.KPodAutoscaler, scaleErr error) error {
+	// Get current replicas
+	var currentReplicas int32
+	switch kpa.Spec.ScaleTargetRef.Kind {
+	case deploymentKind:
+		deployment := &appsv1.Deployment{}
+		key := types.NamespacedName{
+			Namespace: kpa.Namespace,
+			Name:      kpa.Spec.ScaleTargetRef.Name,
+		}
+		if err := w.reconciler.Get(ctx, key, deployment); err != nil {
+			return err
+		}
+		if deployment.Status.Replicas > 0 {
+			currentReplicas = deployment.Status.Replicas
+		} else if deployment.Spec.Replicas != nil {
+			currentReplicas = *deployment.Spec.Replicas
+		} else {
+			currentReplicas = 1
+		}
+
+	case statefulSetKind:
+		statefulSet := &appsv1.StatefulSet{}
+		key := types.NamespacedName{
+			Namespace: kpa.Namespace,
+			Name:      kpa.Spec.ScaleTargetRef.Name,
+		}
+		if err := w.reconciler.Get(ctx, key, statefulSet); err != nil {
+			return err
+		}
+		if statefulSet.Status.Replicas > 0 {
+			currentReplicas = statefulSet.Status.Replicas
+		} else if statefulSet.Spec.Replicas != nil {
+			currentReplicas = *statefulSet.Spec.Replicas
+		} else {
+			currentReplicas = 1
+		}
+	}
+
+	// Update status fields
+	kpa.Status.ObservedGeneration = &kpa.Generation
+	kpa.Status.CurrentReplicas = currentReplicas
+
+	if scaleErr == nil {
+		kpa.Status.LastScaleTime = &metav1.Time{Time: time.Now()}
+		kpa.Status.DesiredReplicas = currentReplicas
+	}
+
+	// Update conditions
+	now := metav1.Now()
+
+	// ScalingActive condition
+	scalingActiveCondition := kpav1alpha1.KPodAutoscalerCondition{
+		Type:               kpav1alpha1.ScalingActive,
+		Status:             corev1.ConditionTrue,
+		LastTransitionTime: now,
+		Reason:             "ScalingActive",
+		Message:            "the KPA controller is able to scale if necessary",
+	}
+	if scaleErr != nil {
+		scalingActiveCondition.Status = corev1.ConditionFalse
+		scalingActiveCondition.Reason = "ScalingError"
+		scalingActiveCondition.Message = scaleErr.Error()
+	}
+
+	// AbleToScale condition
+	ableToScaleCondition := kpav1alpha1.KPodAutoscalerCondition{
+		Type:               kpav1alpha1.AbleToScale,
+		Status:             corev1.ConditionTrue,
+		LastTransitionTime: now,
+		Reason:             "SucceededGetScale",
+		Message:            "the KPA controller was able to get the target's current scale",
+	}
+
+	// Update or append conditions
+	conditions := []kpav1alpha1.KPodAutoscalerCondition{scalingActiveCondition, ableToScaleCondition}
+	for _, newCond := range conditions {
+		found := false
+		for i, cond := range kpa.Status.Conditions {
+			if cond.Type == newCond.Type {
+				if cond.Status != newCond.Status {
+					kpa.Status.Conditions[i] = newCond
+				} else {
+					kpa.Status.Conditions[i].LastTransitionTime = cond.LastTransitionTime
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			kpa.Status.Conditions = append(kpa.Status.Conditions, newCond)
+		}
+	}
+
+	// Update the status
+	return w.reconciler.Status().Update(ctx, kpa)
+}
+
+// updateStatusWithError is a helper to update status when there's an error
+func (w *scalerWorker) updateStatusWithError(kpa *kpav1alpha1.KPodAutoscaler, err error) {
+	if updateErr := w.updateStatus(w.ctx, kpa, err); updateErr != nil {
+		w.logger.Error(updateErr, "Failed to update status with error")
 	}
 }
 
@@ -428,192 +656,6 @@ func (w *scalerWorker) getCurrentReplicas(kpa *kpav1alpha1.KPodAutoscaler) (int3
 	}
 }
 
-// scaleTarget updates the target resource with the desired replica count
-func (r *KPodAutoscalerReconciler) scaleTarget(ctx context.Context, kpa *kpav1alpha1.KPodAutoscaler, desiredReplicas int32) error {
-	switch kpa.Spec.ScaleTargetRef.Kind {
-	case deploymentKind:
-		scale := &autoscalingv1.Scale{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      kpa.Spec.ScaleTargetRef.Name,
-				Namespace: kpa.Namespace,
-			},
-			Spec: autoscalingv1.ScaleSpec{
-				Replicas: desiredReplicas,
-			},
-		}
-
-		// Update scale subresource
-		if err := r.SubResource("scale").Update(ctx, &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      kpa.Spec.ScaleTargetRef.Name,
-				Namespace: kpa.Namespace,
-			},
-		}, client.WithSubResourceBody(scale)); err != nil {
-			return err
-		}
-
-		// Record event
-		r.Recorder.Eventf(kpa, corev1.EventTypeNormal, "SuccessfulRescale", "Scaled deployment to %d replicas", desiredReplicas)
-
-	case statefulSetKind:
-		scale := &autoscalingv1.Scale{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      kpa.Spec.ScaleTargetRef.Name,
-				Namespace: kpa.Namespace,
-			},
-			Spec: autoscalingv1.ScaleSpec{
-				Replicas: desiredReplicas,
-			},
-		}
-
-		// Update scale subresource
-		if err := r.SubResource("scale").Update(ctx, &appsv1.StatefulSet{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      kpa.Spec.ScaleTargetRef.Name,
-				Namespace: kpa.Namespace,
-			},
-		}, client.WithSubResourceBody(scale)); err != nil {
-			return err
-		}
-
-		// Record event
-		r.Recorder.Eventf(kpa, corev1.EventTypeNormal, "SuccessfulRescale", "Scaled statefulset to %d replicas", desiredReplicas)
-
-	default:
-		return fmt.Errorf("unsupported target kind: %s", kpa.Spec.ScaleTargetRef.Kind)
-	}
-
-	return nil
-}
-
-// updateStatus updates the KPodAutoscaler status
-func (r *KPodAutoscalerReconciler) updateStatus(ctx context.Context, kpa *kpav1alpha1.KPodAutoscaler, scaleErr error) error {
-	// Get current replicas
-	var currentReplicas int32
-	switch kpa.Spec.ScaleTargetRef.Kind {
-	case deploymentKind:
-		deployment := &appsv1.Deployment{}
-		key := types.NamespacedName{
-			Namespace: kpa.Namespace,
-			Name:      kpa.Spec.ScaleTargetRef.Name,
-		}
-		if err := r.Get(ctx, key, deployment); err != nil {
-			return err
-		}
-		if deployment.Status.Replicas > 0 {
-			currentReplicas = deployment.Status.Replicas
-		} else if deployment.Spec.Replicas != nil {
-			currentReplicas = *deployment.Spec.Replicas
-		} else {
-			currentReplicas = 1
-		}
-
-	case statefulSetKind:
-		statefulSet := &appsv1.StatefulSet{}
-		key := types.NamespacedName{
-			Namespace: kpa.Namespace,
-			Name:      kpa.Spec.ScaleTargetRef.Name,
-		}
-		if err := r.Get(ctx, key, statefulSet); err != nil {
-			return err
-		}
-		if statefulSet.Status.Replicas > 0 {
-			currentReplicas = statefulSet.Status.Replicas
-		} else if statefulSet.Spec.Replicas != nil {
-			currentReplicas = *statefulSet.Spec.Replicas
-		} else {
-			currentReplicas = 1
-		}
-	}
-
-	// Update status fields
-	kpa.Status.ObservedGeneration = &kpa.Generation
-	kpa.Status.CurrentReplicas = currentReplicas
-
-	if scaleErr == nil {
-		kpa.Status.LastScaleTime = &metav1.Time{Time: time.Now()}
-		kpa.Status.DesiredReplicas = currentReplicas
-	}
-
-	// Update conditions
-	now := metav1.Now()
-
-	// ScalingActive condition
-	scalingActiveCondition := kpav1alpha1.KPodAutoscalerCondition{
-		Type:               kpav1alpha1.ScalingActive,
-		Status:             corev1.ConditionTrue,
-		LastTransitionTime: now,
-		Reason:             "ScalingActive",
-		Message:            "the KPA controller is able to scale if necessary",
-	}
-	if scaleErr != nil {
-		scalingActiveCondition.Status = corev1.ConditionFalse
-		scalingActiveCondition.Reason = "ScalingError"
-		scalingActiveCondition.Message = scaleErr.Error()
-	}
-
-	// AbleToScale condition
-	ableToScaleCondition := kpav1alpha1.KPodAutoscalerCondition{
-		Type:               kpav1alpha1.AbleToScale,
-		Status:             corev1.ConditionTrue,
-		LastTransitionTime: now,
-		Reason:             "SucceededGetScale",
-		Message:            "the KPA controller was able to get the target's current scale",
-	}
-
-	// Update or append conditions
-	conditions := []kpav1alpha1.KPodAutoscalerCondition{scalingActiveCondition, ableToScaleCondition}
-	for _, newCond := range conditions {
-		found := false
-		for i, cond := range kpa.Status.Conditions {
-			if cond.Type == newCond.Type {
-				if cond.Status != newCond.Status {
-					kpa.Status.Conditions[i] = newCond
-				} else {
-					kpa.Status.Conditions[i].LastTransitionTime = cond.LastTransitionTime
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			kpa.Status.Conditions = append(kpa.Status.Conditions, newCond)
-		}
-	}
-
-	// Update the status
-	return r.Status().Update(ctx, kpa)
-}
-
-// SetupWithManager sets up the controller with the Manager.
-func (r *KPodAutoscalerReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Initialize metrics client if not already set
-	if r.MetricsClient == nil {
-		r.MetricsClient = metrics.NewMetricsClient(mgr.GetClient(), mgr.GetRESTMapper())
-	}
-
-	// Initialize recorder if not already set
-	if r.Recorder == nil {
-		r.Recorder = mgr.GetEventRecorderFor("kpodautoscaler-controller")
-	}
-
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&kpav1alpha1.KPodAutoscaler{}).
-		Complete(r)
-}
-
-// stopWorker stops the worker goroutine for the given KPA
-func (r *KPodAutoscalerReconciler) stopWorker(key types.NamespacedName) {
-	r.workersMu.Lock()
-	defer r.workersMu.Unlock()
-
-	if worker, exists := r.scalerWorkers[key]; exists {
-		worker.cancel()
-		close(worker.recommendations)
-		delete(r.scalerWorkers, key)
-	}
-}
-
 // createScaler creates a scaler for a metric spec
 func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTargetRef kpav1alpha1.ScaleTargetRef, namespace string) (*libkpamanager.Scaler, error) {
 	// Create autoscaler config - min/max scale should come from the parent KPA, not metric config
@@ -638,16 +680,16 @@ func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTarg
 	var err error
 
 	// Special case for resource metrics with utilization type
-	if metricSpec.Type == "Resource" && metricSpec.Resource.Target.Type == "Utilization" {
+	if metricSpec.Type == kpav1alpha1.ResourceMetricType && metricSpec.Resource.Target.Type == kpav1alpha1.UtilizationMetricType {
 		var quantity k8sresource.Quantity
 
 		switch scaleTargetRef.Kind {
-		case "Deployment":
+		case deploymentKind:
 			quantity, err = resourcerequests.GetDeploymentPodResourceRequests(w.ctx, w.reconciler.Client, namespace, scaleTargetRef.Name, metricSpec.Resource.Name)
 			if err != nil {
 				return nil, err
 			}
-		case "StatefulSet":
+		case statefulSetKind:
 			quantity, err = resourcerequests.GetStatefulSetPodResourceRequests(w.ctx, w.reconciler.Client, namespace, scaleTargetRef.Name, metricSpec.Resource.Name)
 			if err != nil {
 				return nil, err
@@ -840,9 +882,9 @@ func getTargetValueFromMetricSpec(metricSpec kpav1alpha1.MetricSpec) float64 {
 		return getTargetValue(metricSpec.Resource.Target)
 	case kpav1alpha1.PodsMetricType:
 		return getTargetValue(metricSpec.Pods.Target)
-	case "Object":
+	case kpav1alpha1.ObjectMetricType:
 		return getTargetValue(metricSpec.Object.Target)
-	case "External":
+	case kpav1alpha1.ExternalMetricType:
 		return getTargetValue(metricSpec.External.Target)
 	default:
 		return -1.0
@@ -852,12 +894,41 @@ func getTargetValueFromMetricSpec(metricSpec kpav1alpha1.MetricSpec) float64 {
 // getTargetValue returns the target value for a metric target
 func getTargetValue(metricTarget kpav1alpha1.MetricTarget) float64 {
 	switch metricTarget.Type {
-	case "Utilization":
+	case kpav1alpha1.UtilizationMetricType:
 		return float64(*metricTarget.AverageUtilization)
-	case "Value":
+	case kpav1alpha1.ValueMetricType:
 		return metricTarget.Value.AsApproximateFloat64()
-	case "AverageValue":
+	case kpav1alpha1.AverageValueMetricType:
 		return metricTarget.AverageValue.AsApproximateFloat64()
 	}
 	return -1.0
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *KPodAutoscalerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Initialize metrics client if not already set
+	if r.MetricsClient == nil {
+		r.MetricsClient = metrics.NewMetricsClient(mgr.GetClient(), mgr.GetRESTMapper())
+	}
+
+	// Initialize recorder if not already set
+	if r.Recorder == nil {
+		r.Recorder = mgr.GetEventRecorderFor("kpodautoscaler-controller")
+	}
+
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&kpav1alpha1.KPodAutoscaler{}).
+		Complete(r)
+}
+
+// stopWorker stops the worker goroutine for the given KPA
+func (r *KPodAutoscalerReconciler) stopWorker(key types.NamespacedName) {
+	r.workersMu.Lock()
+	defer r.workersMu.Unlock()
+
+	if worker, exists := r.scalerWorkers[key]; exists {
+		worker.cancel()
+		close(worker.configUpdate)
+		delete(r.scalerWorkers, key)
+	}
 }
