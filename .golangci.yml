@@ -36,6 +36,10 @@ linters:
           - dupl
           - lll
         path: internal/*
+      - linters:
+          - staticcheck
+          - lll
+        path: test/e2e/*
     paths:
       - third_party$
       - builtin$

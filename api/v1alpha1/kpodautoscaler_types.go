@@ -305,91 +305,6 @@ type KPodAutoscalerCondition struct {
 	Message string `json:"message,omitempty"`
 }
 
-// CurrentMetricStatus describes the current status of a metric
-type CurrentMetricStatus struct {
-	// type is the type of metric source.  It will be one of "Object", "Pods" or "Resource", each corresponds to a matching field in the object.
-	Type MetricType `json:"type"`
-
-	// resource refers to a resource metric (such as those specified in
-	// requests and limits) known to Kubernetes describing each pod in the
-	// current scale target (e.g. CPU or memory). Such metrics are built in to
-	// Kubernetes, and have special scaling options on top of those available
-	// to normal per-pod metrics using the "pods" source.
-	// +optional
-	Resource *ResourceMetricStatus `json:"resource,omitempty"`
-	// pods refers to a metric describing each pod in the current scale target
-	// (for example, transactions-processed-per-second).  The values will be
-	// averaged together before being compared to the target value.
-	// +optional
-	Pods *PodsMetricStatus `json:"pods,omitempty"`
-	// object refers to a metric describing a single kubernetes object
-	// (for example, hits-per-second on an Ingress object).
-	// +optional
-	Object *ObjectMetricStatus `json:"object,omitempty"`
-	// external refers to a global metric that is not associated
-	// with any Kubernetes object. It allows autoscaling based on information
-	// coming from components running outside of cluster
-	// (for example length of queue in cloud messaging service, or
-	// QPS from loadbalancer running outside of cluster).
-	// +optional
-	External *ExternalMetricStatus `json:"external,omitempty"`
-}
-
-// ResourceMetricStatus indicates the current value of a resource metric known to
-// Kubernetes, as specified in requests and limits, describing each pod in the
-// current scale target (e.g. CPU or memory).
-type ResourceMetricStatus struct {
-	// Name is the name of the resource in question.
-	Name v1.ResourceName `json:"name"`
-	// current contains the current value for the given metric
-	Current MetricValueStatus `json:"current"`
-}
-
-// PodsMetricStatus indicates the current value of a metric describing each pod in
-// the current scale target (for example, transactions-processed-per-second).
-type PodsMetricStatus struct {
-	// metric identifies the target metric by name and selector
-	Metric MetricIdentifier `json:"metric"`
-	// current contains the current value for the given metric
-	Current MetricValueStatus `json:"current"`
-}
-
-// ObjectMetricStatus indicates the current value of a metric describing a
-// kubernetes object (for example, hits-per-second on an Ingress object).
-type ObjectMetricStatus struct {
-	// metric identifies the target metric by name and selector
-	Metric MetricIdentifier `json:"metric"`
-	// current contains the current value for the given metric
-	Current MetricValueStatus `json:"current"`
-	// DescribedObject specifies the descriptions of a object,such as kind,name apiVersion
-	DescribedObject CrossVersionObjectReference `json:"describedObject"`
-}
-
-// ExternalMetricStatus indicates the current value of a global metric
-// not associated with any Kubernetes object.
-type ExternalMetricStatus struct {
-	// metric identifies the target metric by name and selector
-	Metric MetricIdentifier `json:"metric"`
-	// current contains the current value for the given metric
-	Current MetricValueStatus `json:"current"`
-}
-
-// MetricValueStatus holds the current value for a metric
-type MetricValueStatus struct {
-	// value is the current value of the metric (as a quantity).
-	// +optional
-	Value *resource.Quantity `json:"value,omitempty"`
-	// averageValue is the current value of the average of the
-	// metric across all relevant pods (as a quantity)
-	// +optional
-	AverageValue *resource.Quantity `json:"averageValue,omitempty"`
-	// currentAverageUtilization is the current value of the average of the
-	// resource metric across all relevant pods, represented as a percentage of
-	// the requested value of the resource for the pods.
-	// +optional
-	AverageUtilization *int32 `json:"averageUtilization,omitempty"`
-}
-
 // KPodAutoscalerStatus defines the observed state of KPodAutoscaler
 type KPodAutoscalerStatus struct {
 	// observedGeneration is the most recent generation observed by this autoscaler.
@@ -408,10 +323,6 @@ type KPodAutoscalerStatus struct {
 	// desiredReplicas is the desired number of replicas of pods managed by this autoscaler,
 	// as last calculated by the autoscaler.
 	DesiredReplicas int32 `json:"desiredReplicas"`
-
-	// currentMetrics is the last read state of the metrics used by this autoscaler.
-	// +optional
-	CurrentMetrics []CurrentMetricStatus `json:"currentMetrics"`
 
 	// conditions is the set of conditions required for this autoscaler to scale its target,
 	// and indicates whether or not those conditions are met.

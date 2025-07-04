@@ -67,22 +67,25 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= kpodautoscaler-test-e2e
 
-.PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
-	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	}
-	$(KIND) create cluster --name $(KIND_CLUSTER)
+##@ E2E Testing
+
+.PHONY: docker-load
+docker-load: ## Load Docker image into KinD cluster
+	$(KIND) load docker-image ${IMG} --name $(KIND_CLUSTER)
+
+.PHONY: deploy-operator
+deploy-operator: manifests kustomize ## Deploy operator to the cluster (alias for deploy)
+	$(MAKE) deploy IMG=${IMG}
+
+.PHONY: e2e-deps
+e2e-deps: ## Install E2E test dependencies (metrics-server, prometheus, etc.)
+	scripts/install-deps.sh
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+test-e2e: ## Run complete E2E test suite locally with KinD
+	scripts/e2e-local.sh
 
-.PHONY: cleanup-test-e2e
-cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+##@ Linting
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
