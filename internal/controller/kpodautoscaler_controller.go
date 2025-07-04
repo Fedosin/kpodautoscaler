@@ -305,7 +305,12 @@ func (w *scalerWorker) run(initialKPA *kpav1alpha1.KPodAutoscaler) {
 				}
 
 				// Update status after successful scaling
-				if err := w.updateStatus(w.ctx, currentKPA, nil); err != nil {
+				if err := w.updateStatus(w.ctx, currentKPA, &desiredReplicas, nil); err != nil {
+					w.logger.Error(err, "Failed to update status")
+				}
+			} else {
+				// No scaling needed, but update status to keep current replicas accurate
+				if err := w.updateStatus(w.ctx, currentKPA, nil, nil); err != nil {
 					w.logger.Error(err, "Failed to update status")
 				}
 			}
@@ -400,7 +405,7 @@ func (w *scalerWorker) scaleTarget(ctx context.Context, kpa *kpav1alpha1.KPodAut
 }
 
 // updateStatus updates the KPodAutoscaler status
-func (w *scalerWorker) updateStatus(ctx context.Context, kpa *kpav1alpha1.KPodAutoscaler, scaleErr error) error {
+func (w *scalerWorker) updateStatus(ctx context.Context, kpa *kpav1alpha1.KPodAutoscaler, desiredReplicas *int32, scaleErr error) error {
 	// Get current replicas
 	var currentReplicas int32
 	switch kpa.Spec.ScaleTargetRef.Kind {
@@ -445,7 +450,12 @@ func (w *scalerWorker) updateStatus(ctx context.Context, kpa *kpav1alpha1.KPodAu
 
 	if scaleErr == nil {
 		kpa.Status.LastScaleTime = &metav1.Time{Time: time.Now()}
-		kpa.Status.DesiredReplicas = currentReplicas
+		// Use the provided desiredReplicas if available, otherwise keep current
+		if desiredReplicas != nil {
+			kpa.Status.DesiredReplicas = *desiredReplicas
+		} else {
+			kpa.Status.DesiredReplicas = currentReplicas
+		}
 	}
 
 	// Update conditions
@@ -500,7 +510,7 @@ func (w *scalerWorker) updateStatus(ctx context.Context, kpa *kpav1alpha1.KPodAu
 
 // updateStatusWithError is a helper to update status when there's an error
 func (w *scalerWorker) updateStatusWithError(kpa *kpav1alpha1.KPodAutoscaler, err error) {
-	if updateErr := w.updateStatus(w.ctx, kpa, err); updateErr != nil {
+	if updateErr := w.updateStatus(w.ctx, kpa, nil, err); updateErr != nil {
 		w.logger.Error(updateErr, "Failed to update status with error")
 	}
 }
