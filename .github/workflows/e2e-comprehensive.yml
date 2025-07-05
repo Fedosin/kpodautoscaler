@@ -1,0 +1,115 @@
+name: E2E Comprehensive Tests
+
+on:
+  push:
+    branches:
+      - main
+      - 'release-*'
+  pull_request:
+    branches:
+      - main
+      - 'release-*'
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.24'
+  KIND_VERSION: 'v0.29.0'
+  KUBECTL_VERSION: 'v1.33.2'
+  HELM_VERSION: 'v3.16.3'
+
+jobs:
+  e2e-tests:
+    name: E2E Tests (K8s ${{ matrix.k8s-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s-version:
+          - 'v1.32.5'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install tools
+        run: |
+          # Install kind
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          
+          # Install kubectl
+          curl -Lo kubectl https://dl.k8s.io/release/${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          
+          # Install helm
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash -s -- --version ${{ env.HELM_VERSION }}
+          
+          # Verify installations
+          kind version
+          kubectl version --client
+          helm version
+
+      - name: Run E2E tests
+        run: |
+          SKIP_CLEANUP=true make test-e2e
+
+      - name: Collect artifacts on failure
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          
+          # Collect operator logs
+          kubectl logs -n kpodautoscaler-system -l control-plane=controller-manager --all-containers=true > artifacts/operator-logs.txt || true
+          
+          # Collect events
+          kubectl get events --all-namespaces --sort-by='.lastTimestamp' > artifacts/events.txt || true
+          
+          # Collect pod descriptions
+          kubectl describe pods --all-namespaces > artifacts/pod-descriptions.txt || true
+          
+          # Collect KPodAutoscaler resources
+          kubectl get kpodautoscalers --all-namespaces -o yaml > artifacts/kpodautoscalers.yaml || true
+          
+          # Collect metrics
+          kubectl top nodes > artifacts/node-metrics.txt || true
+          kubectl top pods --all-namespaces > artifacts/pod-metrics.txt || true
+          
+          # Collect custom and external metrics
+          kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1 > artifacts/custom-metrics.json || true
+          kubectl get --raw /apis/external.metrics.k8s.io/v1beta1 > artifacts/external-metrics.json || true
+
+      - name: Upload artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-${{ matrix.k8s-version }}-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kind delete cluster --name kpodautoscaler-e2e || true
+
+  e2e-summary:
+    name: E2E Tests Summary
+    runs-on: ubuntu-latest
+    needs: e2e-tests
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.e2e-tests.result }}" == "success" ]; then
+            echo "✅ All E2E tests passed successfully!"
+            exit 0
+          else
+            echo "❌ E2E tests failed!"
+            exit 1
+          fi
