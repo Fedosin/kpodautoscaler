@@ -22,28 +22,31 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// MetricType is the type of metric
-type MetricType string
+// KPodAutoscalerMetricType is the type of metric
+type KPodAutoscalerMetricType string
 
 const (
 	// ResourceMetricType is a resource metric known to Kubernetes, as specified in
 	// requests and limits, describing each pod in the current scale target (e.g. CPU or memory).
-	ResourceMetricType MetricType = "Resource"
+	ResourceMetricType KPodAutoscalerMetricType = "Resource"
 	// PodsMetricType is a metric describing each pod in the current scale
 	// target (for example, transactions-processed-per-second).
-	PodsMetricType MetricType = "Pods"
+	PodsMetricType KPodAutoscalerMetricType = "Pods"
 	// ObjectMetricType is a metric describing a single kubernetes object
 	// (for example, hits-per-second on an Ingress object).
-	ObjectMetricType MetricType = "Object"
+	ObjectMetricType KPodAutoscalerMetricType = "Object"
 	// ExternalMetricType is a global metric that is not associated
 	// with any Kubernetes object. It allows autoscaling based on information
 	// coming from components running outside of cluster.
-	ExternalMetricType MetricType = "External"
+	ExternalMetricType KPodAutoscalerMetricType = "External"
+	// UserMetricType is a metric scraped directly from the pod.
+	UserMetricType KPodAutoscalerMetricType = "User"
 )
 
 // MetricTargetType specifies the type of metric being targeted, and should be either
@@ -174,6 +177,29 @@ type ExternalMetricSource struct {
 	Target MetricTarget `json:"target"`
 }
 
+// UserMetric defines a metric to be scraped from a user application.
+type UserMetric struct {
+	// Name is the name of the metric.
+	Name string `json:"name"`
+	// Port is the port to scrape the metric from.
+	Port intstr.IntOrString `json:"port"`
+	// Path is the path to scrape the metric from.
+	// +optional
+	Path string `json:"path,omitempty"`
+	// Interval is the interval at which to scrape the metric.
+	// +optional
+	Interval metav1.Duration `json:"interval,omitempty"`
+}
+
+// UserMetricSource indicates how to scale on a metric scraped directly from a
+// pod.
+type UserMetricSource struct {
+	// Metric defines the metric to be scraped.
+	Metric UserMetric `json:"metric"`
+	// Target specifies the target value for the given metric.
+	Target MetricTarget `json:"target"`
+}
+
 // MetricIdentifier defines the name and optionally selector for a metric
 type MetricIdentifier struct {
 	// name is the name of the given metric
@@ -201,7 +227,7 @@ type CrossVersionObjectReference struct {
 // (only `type` and one other matching field should be set at once).
 type MetricSpec struct {
 	// type is the type of metric source.  It should be one of "Object", "Pods" or "Resource", each mapping to a matching field in the object.
-	Type MetricType `json:"type"`
+	Type KPodAutoscalerMetricType `json:"type"`
 
 	// config contains libkpa autoscaler configuration for this metric
 	// +optional
@@ -230,6 +256,9 @@ type MetricSpec struct {
 	// QPS from loadbalancer running outside of cluster).
 	// +optional
 	External *ExternalMetricSource `json:"external,omitempty"`
+	// user refers to a metric scraped directly from the pod.
+	// +optional
+	User *UserMetricSource `json:"user,omitempty"`
 }
 
 // ScaleTargetRef contains reference to the scalable resource

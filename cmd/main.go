@@ -28,6 +28,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
@@ -40,6 +41,7 @@ import (
 	autoscalingv1alpha1 "github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 	"github.com/Fedosin/kpodautoscaler/internal/controller"
 	"github.com/Fedosin/kpodautoscaler/internal/pkg/metrics"
+	"github.com/Fedosin/kpodautoscaler/internal/pkg/scraper"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -205,11 +207,19 @@ func main() {
 	// Create metrics clients
 	metricsClient := metrics.NewMetricsClient(mgr.GetClient(), mgr.GetRESTMapper())
 
+	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to create clientset")
+		os.Exit(1)
+	}
+	userScraper := scraper.NewUserScraper(clientset)
+
 	if err = (&controller.KPodAutoscalerReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
 		Log:           ctrl.Log.WithName("controllers").WithName("KPodAutoscaler"),
 		MetricsClient: metricsClient,
+		UserScraper:   userScraper,
 		Recorder:      mgr.GetEventRecorderFor("kpodautoscaler-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KPodAutoscaler")

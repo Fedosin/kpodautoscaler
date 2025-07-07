@@ -42,6 +42,7 @@ import (
 	kpav1alpha1 "github.com/Fedosin/kpodautoscaler/api/v1alpha1"
 	"github.com/Fedosin/kpodautoscaler/internal/pkg/metrics"
 	"github.com/Fedosin/kpodautoscaler/internal/pkg/resourcerequests"
+	"github.com/Fedosin/kpodautoscaler/internal/pkg/scraper"
 )
 
 // KPodAutoscalerReconciler reconciles a KPodAutoscaler object
@@ -49,6 +50,7 @@ type KPodAutoscalerReconciler struct {
 	client.Client
 	Scheme        *runtime.Scheme
 	MetricsClient *metrics.MetricsClient
+	UserScraper   *scraper.UserScraper
 
 	Log logr.Logger
 	// Recorder for events
@@ -526,6 +528,8 @@ func (w *scalerWorker) collectMetric(ctx context.Context, metricSpec kpav1alpha1
 		return w.collectObjectMetric(ctx, metricSpec.Object, kpa)
 	case kpav1alpha1.ExternalMetricType:
 		return w.collectExternalMetric(ctx, metricSpec.External, kpa)
+	case kpav1alpha1.UserMetricType:
+		return w.collectUserMetric(ctx, metricSpec.User, kpa)
 	default:
 		return 0, fmt.Errorf("unknown metric type: %s", metricSpec.Type)
 	}
@@ -558,8 +562,12 @@ func (w *scalerWorker) collectResourceMetric(ctx context.Context, resource *kpav
 	for _, v := range values {
 		sum += v.MilliValue()
 	}
-	avgMilliValue := sum / int64(len(values))
-	avgValue := float64(avgMilliValue) / 1000.0
+
+	var avgValue float64
+	if len(values) > 0 {
+		avgMilliValue := sum / int64(len(values))
+		avgValue = float64(avgMilliValue) / 1000.0
+	}
 
 	// For utilization metrics, convert to percentage
 	if resource.Target.Type == kpav1alpha1.UtilizationMetricType {
@@ -869,6 +877,22 @@ func (w *scalerWorker) collectExternalMetric(ctx context.Context, external *kpav
 	return currentValue, nil
 }
 
+// collectUserMetric collects user metrics
+func (w *scalerWorker) collectUserMetric(ctx context.Context, userMetric *kpav1alpha1.UserMetricSource, kpa *kpav1alpha1.KPodAutoscaler) (float64, error) {
+	if userMetric == nil {
+		return 0, fmt.Errorf("user metric source is nil")
+	}
+	if w.reconciler.UserScraper == nil {
+		return 0, fmt.Errorf("UserScraper not initialized")
+	}
+
+	val, err := w.reconciler.UserScraper.GetMetricValue(ctx, kpa, userMetric)
+	if err != nil {
+		return 0, err
+	}
+	return float64(val), nil
+}
+
 // getMetricName returns the name of the metric
 func getMetricName(metricSpec kpav1alpha1.MetricSpec) string {
 	switch metricSpec.Type {
@@ -880,6 +904,8 @@ func getMetricName(metricSpec kpav1alpha1.MetricSpec) string {
 		return metricSpec.Object.Metric.Name
 	case kpav1alpha1.ExternalMetricType:
 		return metricSpec.External.Metric.Name
+	case kpav1alpha1.UserMetricType:
+		return metricSpec.User.Metric.Name
 	default:
 		return ""
 	}
@@ -896,6 +922,8 @@ func getTargetValueFromMetricSpec(metricSpec kpav1alpha1.MetricSpec) float64 {
 		return getTargetValue(metricSpec.Object.Target)
 	case kpav1alpha1.ExternalMetricType:
 		return getTargetValue(metricSpec.External.Target)
+	case kpav1alpha1.UserMetricType:
+		return getTargetValue(metricSpec.User.Target)
 	default:
 		return -1.0
 	}

@@ -320,7 +320,7 @@ func (h *E2ETestHelper) CreateHTTPMetricsExporter(ctx context.Context, name stri
 					Containers: []corev1.Container{
 						{
 							Name:  "metrics-exporter",
-							Image: "quay.io/brancz/prometheus-example-app:v0.3.0",
+							Image: "quay.io/brancz/prometheus-example-app:v0.5.0",
 							Args: []string{
 								"-bind=:8080",
 							},

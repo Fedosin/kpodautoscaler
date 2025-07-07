@@ -575,6 +575,73 @@ spec:
                         one of "Object", "Pods" or "Resource", each mapping to a matching
                         field in the object.
                       type: string
+                    user:
+                      description: user refers to a metric scraped directly from the
+                        pod.
+                      properties:
+                        metric:
+                          description: Metric defines the metric to be scraped.
+                          properties:
+                            interval:
+                              description: Interval is the interval at which to scrape
+                                the metric.
+                              type: string
+                            name:
+                              description: Name is the name of the metric.
+                              type: string
+                            path:
+                              description: Path is the path to scrape the metric from.
+                              type: string
+                            port:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Port is the port to scrape the metric from.
+                              x-kubernetes-int-or-string: true
+                          required:
+                          - name
+                          - port
+                          type: object
+                        target:
+                          description: Target specifies the target value for the given
+                            metric.
+                          properties:
+                            averageUtilization:
+                              description: |-
+                                averageUtilization is the target value of the average of the
+                                resource metric across all relevant pods, represented as a percentage of
+                                the requested value of the resource for the pods.
+                                Currently only valid for Resource metric source type
+                              format: int32
+                              type: integer
+                            averageValue:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: |-
+                                averageValue is the target value of the average of the
+                                metric across all relevant pods (as a quantity)
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            type:
+                              description: type represents whether the metric type
+                                is Utilization, Value, or AverageValue
+                              type: string
+                            value:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: value is the target value of the metric
+                                (as a quantity).
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                          required:
+                          - type
+                          type: object
+                      required:
+                      - metric
+                      - target
+                      type: object
                   required:
                   - type
                   type: object

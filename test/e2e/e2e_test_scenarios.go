@@ -31,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -433,6 +434,106 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Waiting for scale up due to queue length")
+			Eventually(func(g Gomega) {
+				kpa := &kpav1alpha1.KPodAutoscaler{}
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      kpaName,
+					Namespace: helper.Namespace,
+				}, kpa)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(kpa.Status.DesiredReplicas).To(BeNumerically(">", 1))
+			}, helpers.TestConstants.ScaleTimeout, helpers.TestConstants.DefaultInterval).Should(Succeed())
+
+			By("Verifying deployment scaled up")
+			Eventually(func(g Gomega) {
+				deployment := &v1.Deployment{}
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      deploymentName,
+					Namespace: helper.Namespace,
+				}, deployment)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(deployment.Status.ReadyReplicas).To(BeNumerically(">", 1))
+			}, helpers.TestConstants.ScaleTimeout, helpers.TestConstants.DefaultInterval).Should(Succeed())
+
+			By("Test completed successfully")
+		})
+	})
+
+	Context("Scenario 4: User metrics autoscaling", func() {
+		It("should scale deployment based on user metrics scraped from pods", func() {
+			deploymentName := "user-metrics-app"
+			serviceName := "user-metrics-svc"
+			kpaName := "user-metrics-autoscaler"
+
+			By("Creating HTTP metrics exporter deployment")
+			_, err := helper.CreateHTTPMetricsExporter(ctx, deploymentName)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Waiting for deployment to be ready")
+			err = helper.WaitForDeploymentReady(ctx, deploymentName)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Creating service for metrics exporter")
+			selector := map[string]string{"app": deploymentName}
+			_, err = helper.CreateService(ctx, serviceName, selector, 8080)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Creating KPodAutoscaler for user metrics scaling")
+			targetRef := kpav1alpha1.ScaleTargetRef{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       deploymentName,
+			}
+
+			metrics := []kpav1alpha1.MetricSpec{
+				{
+					Type: kpav1alpha1.UserMetricType,
+					User: &kpav1alpha1.UserMetricSource{
+						Metric: kpav1alpha1.UserMetric{
+							Name: "http_requests_total",
+							Port: intstr.FromString("metrics"),
+							Path: "/metrics",
+						},
+						Target: kpav1alpha1.MetricTarget{
+							Type:         kpav1alpha1.AverageValueMetricType,
+							AverageValue: resource.NewQuantity(5, resource.DecimalSI),
+						},
+					},
+				},
+			}
+
+			_, err = helper.CreateKPodAutoscaler(ctx, kpaName, targetRef, 1, 3, metrics)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Waiting for KPodAutoscaler to become active")
+			err = helper.WaitForKPAActive(ctx, kpaName)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Generating HTTP load to trigger scale up")
+			loadGeneratorPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "load-generator",
+					Namespace: helper.Namespace,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "curl",
+							Image: "curlimages/curl:7.84.0",
+							Command: []string{
+								"/bin/sh",
+								"-c",
+								fmt.Sprintf("end=$(($(date +%%s) + 180)); while [ $(date +%%s) -lt $end ]; do curl -s http://%s:8080/hello > /dev/null; sleep 0.1; done", serviceName),
+							},
+						},
+					},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			}
+			err = k8sClient.Create(ctx, loadGeneratorPod)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Waiting for scale up due to high metric value")
 			Eventually(func(g Gomega) {
 				kpa := &kpav1alpha1.KPodAutoscaler{}
 				err := k8sClient.Get(ctx, types.NamespacedName{
