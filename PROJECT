@@ -18,4 +18,9 @@ resources:
   kind: KPodAutoscaler
   path: github.com/Fedosin/kpodautoscaler/api/v1alpha1
   version: v1alpha1
+- controller: true
+  domain: kpodautoscaler.io
+  group: keda.sh
+  kind: ScaledObject
+  version: v1alpha1
 version: "3"
