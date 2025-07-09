@@ -168,6 +168,43 @@ spec:
       panicThreshold: 150.0
 ```
 
+### KEDA ScaledObject Integration
+
+KPA includes an optional integration controller that allows KEDA ScaledObject resources to use KPodAutoscaler as their scaling backend. This enables you to leverage KPA's advanced scaling algorithms while maintaining compatibility with KEDA's trigger ecosystem.
+
+#### Enabling ScaledObject Integration
+
+To use KPA with a KEDA ScaledObject, simply add an annotation:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: my-scaledobject
+  annotations:
+    autoscaling.kpodautoscaler.io/managed-backend: "true"
+spec:
+  scaleTargetRef:
+    name: my-deployment
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus:9090
+        metricName: http_requests_per_second
+        query: sum(rate(http_requests_total[1m]))
+        threshold: "100"
+```
+
+When this annotation is present:
+- The integration controller creates a corresponding KPodAutoscaler
+- KEDA's scaling is automatically paused
+- The ScaledObject triggers are translated to KPA metrics
+- Deletion is handled cleanly with finalizers
+
+For more details, see the [ScaledObject Integration Guide](docs/scaledobject-integration.md).
+
 ## Configuration
 
 ### MetricConfig Options

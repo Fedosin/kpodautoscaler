@@ -23,8 +23,9 @@ rules:
   - apps
   resources:
   - deployments
-  - statefulsets
   verbs:
+  - create
+  - delete
   - get
   - list
   - patch
@@ -39,6 +40,25 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
 - apiGroups:
   - autoscaling.kpodautoscaler.io
   resources:
@@ -73,6 +93,30 @@ rules:
   verbs:
   - get
   - list
+- apiGroups:
+  - keda.sh
+  resources:
+  - scaledobjects
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - keda.sh
+  resources:
+  - scaledobjects/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - keda.sh
+  resources:
+  - scaledobjects/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - metrics.k8s.io
   resources:

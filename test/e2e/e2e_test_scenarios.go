@@ -309,7 +309,8 @@ spec:
 	Context("Scenario 3: External metrics autoscaling with KEDA", func() {
 		It("should scale deployment based on Redis queue length", func() {
 			deploymentName := "redis-consumer-app"
-			kpaName := "external-metrics-autoscaler"
+			scaledObjectName := "redis-scaledobject"
+			kpaName := "keda-kpa-" + scaledObjectName
 
 			By("Creating a simple Redis consumer deployment")
 			labels := map[string]string{"app": deploymentName}
@@ -359,13 +360,15 @@ spec:
 			err = helper.WaitForDeploymentReady(ctx, deploymentName)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Creating KEDA ScaledObject for Redis queue")
+			By("Creating KPA managed KEDA ScaledObject for Redis queue")
 			scaledObject := fmt.Sprintf(`
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: redis-scaledobject
+  name: %s
   namespace: %s
+  annotations:
+    autoscaling.kpodautoscaler.io/managed-backend: "true"
 spec:
   scaleTargetRef:
     name: %s
@@ -375,49 +378,11 @@ spec:
       address: redis-master.redis.svc.cluster.local:6379
       listName: myqueue
       listLength: "5"
-`, helper.Namespace, deploymentName)
+`, scaledObjectName, helper.Namespace, deploymentName)
 
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(scaledObject)
 			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Creating KPodAutoscaler for external metrics scaling")
-			targetRef := kpav1alpha1.ScaleTargetRef{
-				APIVersion: "apps/v1",
-				Kind:       "Deployment",
-				Name:       deploymentName,
-			}
-
-			metrics := []kpav1alpha1.MetricSpec{
-				{
-					Type: kpav1alpha1.ExternalMetricType,
-					External: &kpav1alpha1.ExternalMetricSource{
-						Metric: kpav1alpha1.MetricIdentifier{
-							Name: "s0-redis-myqueue",
-							Selector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"scaledobject.keda.sh/name": "redis-scaledobject",
-								},
-							},
-						},
-						Target: kpav1alpha1.MetricTarget{
-							Type:  kpav1alpha1.ValueMetricType,
-							Value: resource.NewQuantity(10, resource.DecimalSI),
-						},
-					},
-					Config: &kpav1alpha1.MetricConfig{
-						TargetValue:      resource.NewQuantity(5, resource.DecimalSI),
-						TotalValue:       resource.NewQuantity(20, resource.DecimalSI),
-						MaxScaleUpRate:   resource.NewQuantity(2, resource.DecimalSI),
-						MaxScaleDownRate: resource.NewQuantity(2, resource.DecimalSI),
-						StableWindow:     30 * time.Second,
-						ScaleDownDelay:   60 * time.Second,
-					},
-				},
-			}
-
-			_, err = helper.CreateKPodAutoscaler(ctx, kpaName, targetRef, 1, 5, metrics)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Waiting for KPodAutoscaler to become active")
