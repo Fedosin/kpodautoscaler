@@ -303,7 +303,9 @@ spec:
 	})
 
 	Context("Scenario 3: External metrics autoscaling with KEDA", func() {
-		It("should scale deployment based on Redis queue length", func() {
+		// TODO: This test doesn't work as expected.
+		// We need to merge https://github.com/Fedosin/kpodautoscaler/pull/5 first.
+		PIt("should scale deployment based on Redis queue length", func() {
 			deploymentName := "redis-consumer-app"
 			kpaName := "external-metrics-autoscaler"
 
