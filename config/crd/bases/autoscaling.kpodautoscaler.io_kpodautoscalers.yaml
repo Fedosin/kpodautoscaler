@@ -157,33 +157,6 @@ spec:
                             scaling decisions. Must be between 5s and 600s. Default is 60s.
                           format: int64
                           type: integer
-                        targetBurstCapacity:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          description: |-
-                            TargetBurstCapacity is the desired burst capacity to maintain without queuing.
-                            If negative, it means unlimited burst capacity. Default is 211.0.
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        targetValue:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          description: |-
-                            TargetValue is the desired value of the scaling metric per pod that we aim to maintain.
-                            This must be less than or equal to TotalValue. Default is 100.0.
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        totalValue:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          description: |-
-                            TotalValue is the total capacity of the scaling metric that a pod can handle.
-                            Default is 1000.0.
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
                       type: object
                     external:
                       description: |-

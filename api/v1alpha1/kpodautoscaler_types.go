@@ -89,18 +89,6 @@ type MetricConfig struct {
 	// by at most halving the pod count. Default is 2.0.
 	MaxScaleDownRate *resource.Quantity `json:"maxScaleDownRate,omitempty"`
 
-	// TargetValue is the desired value of the scaling metric per pod that we aim to maintain.
-	// This must be less than or equal to TotalValue. Default is 100.0.
-	TargetValue *resource.Quantity `json:"targetValue,omitempty"`
-
-	// TotalValue is the total capacity of the scaling metric that a pod can handle.
-	// Default is 1000.0.
-	TotalValue *resource.Quantity `json:"totalValue,omitempty"`
-
-	// TargetBurstCapacity is the desired burst capacity to maintain without queuing.
-	// If negative, it means unlimited burst capacity. Default is 211.0.
-	TargetBurstCapacity *resource.Quantity `json:"targetBurstCapacity,omitempty"`
-
 	// PanicThreshold is the threshold for entering panic mode, expressed as a
 	// percentage of desired pod count. If the observed load over the panic window
 	// exceeds this percentage of the current pod count capacity, panic mode is triggered.

@@ -147,8 +147,6 @@ var _ = Describe("KPodAutoscaler E2E Test Scenarios", func() {
 						},
 					},
 					Config: &kpav1alpha1.MetricConfig{
-						TargetValue:      resource.NewQuantity(50, resource.DecimalSI),
-						TotalValue:       resource.NewQuantity(100, resource.DecimalSI),
 						MaxScaleUpRate:   resource.NewQuantity(2, resource.DecimalSI),
 						MaxScaleDownRate: resource.NewQuantity(2, resource.DecimalSI),
 						StableWindow:     30 * time.Second,
@@ -275,8 +273,6 @@ spec:
 						},
 					},
 					Config: &kpav1alpha1.MetricConfig{
-						TargetValue:      resource.NewQuantity(100, resource.DecimalSI),
-						TotalValue:       resource.NewQuantity(500, resource.DecimalSI),
 						MaxScaleUpRate:   resource.NewQuantity(2, resource.DecimalSI),
 						MaxScaleDownRate: resource.NewQuantity(2, resource.DecimalSI),
 						StableWindow:     30 * time.Second,
@@ -407,8 +403,6 @@ spec:
 						},
 					},
 					Config: &kpav1alpha1.MetricConfig{
-						TargetValue:      resource.NewQuantity(5, resource.DecimalSI),
-						TotalValue:       resource.NewQuantity(20, resource.DecimalSI),
 						MaxScaleUpRate:   resource.NewQuantity(2, resource.DecimalSI),
 						MaxScaleDownRate: resource.NewQuantity(2, resource.DecimalSI),
 						StableWindow:     30 * time.Second,

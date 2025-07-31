@@ -682,7 +682,6 @@ func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTarg
 	config := libkpaapi.AutoscalerConfig{
 		MaxScaleUpRate:        1000.0,
 		MaxScaleDownRate:      2.0,
-		TargetValue:           0.0,
 		PanicThreshold:        2.0,
 		ScaleDownDelay:        5 * time.Second,
 		ActivationScale:       1,
@@ -733,10 +732,6 @@ func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTarg
 
 		if mc.MaxScaleDownRate != nil {
 			config.MaxScaleDownRate = mc.MaxScaleDownRate.AsApproximateFloat64()
-		}
-
-		if mc.TargetValue != nil {
-			config.TargetValue = mc.TargetValue.AsApproximateFloat64()
 		}
 
 		if mc.PanicThreshold != nil {
