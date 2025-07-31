@@ -62,12 +62,22 @@ const (
 	AverageValueMetricType MetricTargetType = "AverageValue"
 )
 
+type MetricAggregationAlgorithm string
+
+const (
+	// LinearMetricAggregationAlgorithm is the default algorithm for metrics aggregation.
+	// It is a simple average of the metrics.
+	LinearMetricAggregationAlgorithm MetricAggregationAlgorithm = "linear"
+	// WeightedMetricAggregationAlgorithm is the algorithm for metrics aggregation
+	WeightedMetricAggregationAlgorithm MetricAggregationAlgorithm = "weighted"
+)
+
 // MetricConfig contains configuration for libkpa autoscaler
 type MetricConfig struct {
 	// AggregationAlgorithm specifies the algorithm to use for metrics aggregation
 	// Possible values: "linear" (default) or "weighted"
 	// +optional
-	AggregationAlgorithm string `json:"aggregationAlgorithm,omitempty"`
+	AggregationAlgorithm MetricAggregationAlgorithm `json:"aggregationAlgorithm,omitempty"`
 
 	// MaxScaleUpRate is the maximum rate at which the autoscaler will scale up pods.
 	// It must be greater than 1.0. For example, a value of 2.0 allows scaling up
