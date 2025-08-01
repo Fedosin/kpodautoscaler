@@ -1,21 +1,22 @@
 # K Pod Autoscaler (KPA)
 
-A Kubernetes controller that provides advanced pod autoscaling using algorithms from [libkpa](https://github.com/Fedosin/libkpa). KPA is compatible with the HorizontalPodAutoscaler CRD pattern but uses more sophisticated scaling algorithms including sliding window and weighted time window approaches.
+A high-performance Kubernetes pod autoscaler designed for rapid scaling of bursty workloads with "canyon" traffic patterns where request volumes can spike suddenly. Ideal for AI/ML services and serverless workloads, KPA leverages advanced algorithms from [Knative Serving](https://knative.dev/docs/serving/) to react quickly to traffic surges while maintaining stability. For optimal scaling decisions, the autoscaler supports two modes - stable and burst - and intelligently switches between them based on workload patterns.
 
 ## Features
 
-- **Advanced Scaling Algorithms**: Uses libkpa's sliding window algorithms for more stable and predictable scaling
-- **Multiple Metric Support**: Supports Resource, Pods, Object, and External metrics
+- **Advanced Scaling Algorithms**: Uses sliding window algorithms for more stable and predictable scaling
+- **Multiple Metric Support**: Supports Resource, Pods, Object, and External metrics. Additionally supports scraping metrics directly from user pods, with Prometheus integration planned for future releases
 - **Per-Metric Configuration**: Each metric can have its own window size, burst threshold, and scaling rates
 - **HPA-Compatible**: Similar API to Kubernetes HorizontalPodAutoscaler for easy migration
-- **Per-CR Goroutines**: Dedicated goroutine per autoscaler for 1-second metric fetching intervals
+- **Per-CR Goroutines**: Dedicated goroutine per autoscaler for subsecond metric fetching intervals
+- **KEDA Integration**: Specially annotated ScaledObjects can use KPA as a backend for enhanced scaling capabilities
 
 ## Architecture
 
 KPA follows a controller-runtime pattern with:
 - CRD defining KPodAutoscaler resources
 - Controller reconciling KPA objects
-- Per-CR goroutines fetching metrics every second
+- Per-CR goroutines fetching metrics
 - Integration with Kubernetes metrics APIs (Metrics Server, Custom Metrics, External Metrics)
 
 ## Prerequisites
@@ -91,9 +92,9 @@ spec:
         type: Utilization
         averageUtilization: 70
     config:
-      algorithm: "linear"  # or "weighted"
-      windowSize: 60s
-      burstWindow: 6s
+      aggregationAlgorithm: "linear"  # or "weighted"
+      stableWindow: 60s
+      burstWindowPercentage: 10.0
 ```
 
 ### Advanced Example with Multiple Metrics
@@ -119,11 +120,11 @@ spec:
         type: Utilization
         averageUtilization: 80
     config:
-      algorithm: "weighted"
-      windowSize: 120s
-      burstWindow: 10s
-      scaleUpRate: 2.0
-      scaleDownRate: 0.5
+      aggregationAlgorithm: "weighted"
+      stableWindow: 120s
+      burstWindowPercentage: 8.33
+      maxScaleUpRate: 2.0
+      maxScaleDownRate: 0.5
       burstThreshold: 200.0
   
   # Memory metric
@@ -134,7 +135,7 @@ spec:
         type: AverageValue
         averageValue: "1Gi"
     config:
-      windowSize: 90s
+      stableWindow: 90s
   
   # Custom metric from Prometheus
   - type: Pods
@@ -148,8 +149,8 @@ spec:
         type: AverageValue
         averageValue: "100"
     config:
-      algorithm: "linear"
-      windowSize: 60s
+      aggregationAlgorithm: "linear"
+      stableWindow: 60s
   
   # External metric (e.g., queue length)
   - type: External
@@ -163,7 +164,7 @@ spec:
         type: Value
         value: "30"
     config:
-      windowSize: 120s
+      stableWindow: 120s
       burstThreshold: 150.0
 ```
 
@@ -173,35 +174,51 @@ spec:
 
 Each metric can have a `config` section with the following options:
 
-| Field | Description | Default |
-|-------|-------------|---------|
-| `algorithm` | Scaling algorithm: "linear" or "weighted" | "linear" |
-| `windowSize` | Time window for stable metrics | 60s |
-| `burstWindow` | Time window for burst mode metrics | 6s (10% of windowSize) |
-| `scaleUpRate` | Maximum scale up rate | 1000.0 |
-| `scaleDownRate` | Maximum scale down rate | 2.0 |
-| `maxScaleUpRate` | Absolute maximum scale up rate | 1000.0 |
-| `maxScaleDownRate` | Absolute maximum scale down rate | 2.0 |
-| `burstThreshold` | Threshold for entering burst mode (% of target) | 200.0 |
-| `stableWindow` | Window size for stable metrics | 60s |
-| `initialScale` | Initial scale when creating autoscaler | 1 |
-| `targetUtilization` | Target utilization percentage | Based on metric target |
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `aggregationAlgorithm` | string | Metrics aggregation algorithm: "linear" or "weighted" | "linear" |
+| `maxScaleUpRate` | resource.Quantity | Maximum rate at which the autoscaler will scale up pods (must be > 1.0) | 1000.0 |
+| `maxScaleDownRate` | resource.Quantity | Maximum rate at which the autoscaler will scale down pods (must be > 1.0) | 2.0 |
+| `burstThreshold` | resource.Quantity | Threshold for entering burst mode (% of desired pod count) | 200 (200%) |
+| `burstWindowPercentage` | resource.Quantity | Percentage of stable window used for burst mode calculations (1.0-100.0) | 10.0 |
+| `stableWindow` | time.Duration | Time window over which metrics are averaged for scaling decisions (5s-600s) | 60s |
+| `scaleDownDelay` | time.Duration | Minimum time that must pass at reduced load before scaling down | 0s |
+| `activationScale` | int32 | Minimum scale to use when scaling from zero (must be >= 1) | 1 |
+| `scaleToZeroGracePeriod` | time.Duration | Time to wait before scaling to zero after the service becomes idle | 30s |
 
 ## Development
 
 ### Project Structure
 
 ```
-├── api/v1alpha1/          # CRD types
-├── controllers/           # Reconciliation logic
-├── cmd/manager/          # Controller entrypoint
-├── pkg/
-│   ├── metrics/          # Metrics API wrappers
-│   └── libkpa-integration/ # libkpa integration
-├── charts/kpodautoscaler/ # Helm chart
-└── tests/
-    ├── unit/             # Unit tests
-    └── e2e/              # End-to-end tests
+├── api/v1alpha1/          # CRD types and API definitions
+├── bin/                   # Build output directory
+├── cmd/                   # Application entrypoint
+│   └── main.go           # Controller manager main
+├── config/                # Kubernetes manifests
+│   ├── crd/              # CustomResourceDefinition manifests
+│   ├── default/          # Default configuration patches
+│   ├── manager/          # Controller manager deployment
+│   ├── network-policy/   # Network policies
+│   ├── prometheus/       # Prometheus monitoring config
+│   ├── rbac/             # RBAC roles and bindings
+│   └── samples/          # Sample KPodAutoscaler resources
+├── helm/                  
+│   └── kpodautoscaler/   # Helm chart
+├── internal/              # Private application code
+│   ├── controller/       # Reconciliation logic
+│   └── pkg/              # Internal packages
+│       ├── metrics/      # Metrics collection and aggregation
+│       ├── resourcerequests/ # Resource request calculations
+│       └── scraper/      # User metrics scraping
+├── scripts/               # Development and deployment scripts
+├── test/                  # Test files
+│   ├── e2e/              # End-to-end tests
+│   ├── manifests/        # Test manifests
+│   └── utils/            # Test utilities
+├── Dockerfile             # Container image build
+├── Makefile              # Build and development tasks
+└── PROJECT               # Kubebuilder project metadata
 ```
 
 ### Building
@@ -232,7 +249,7 @@ make docker-build IMG=controller:latest
 make test
 
 # Run specific package tests
-go test ./pkg/libkpa-integration/...
+go test ./internal/pkg/...
 
 # Run with coverage
 go test -coverprofile=coverage.out ./...
@@ -245,8 +262,7 @@ The E2E tests use KIND (Kubernetes in Docker) to spin up a test cluster:
 
 ```bash
 # Run E2E tests
-cd tests/e2e
-go test -v ./...
+make test-e2e
 ```
 
 The E2E tests will:
@@ -276,7 +292,7 @@ The E2E tests will:
 
 ## Helm Chart
 
-The Helm chart is located in `charts/kpodautoscaler/` and includes:
+The Helm chart is located in `helm/kpodautoscaler/` and includes:
 
 - CRD installation
 - Controller deployment
@@ -360,4 +376,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 - [libkpa](https://github.com/Fedosin/libkpa) for the advanced autoscaling algorithms
 - Kubernetes HPA for the API design inspiration
-- Controller-runtime for the excellent framework 
+- Controller-runtime for the excellent framework
