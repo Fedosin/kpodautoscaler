@@ -1,21 +1,22 @@
 # K Pod Autoscaler (KPA)
 
-A Kubernetes controller that provides advanced pod autoscaling using algorithms from [libkpa](https://github.com/Fedosin/libkpa). KPA is compatible with the HorizontalPodAutoscaler CRD pattern but uses more sophisticated scaling algorithms including sliding window and weighted time window approaches.
+A high-performance Kubernetes pod autoscaler designed for rapid scaling of bursty workloads with "canyon" traffic patterns where request volumes can spike suddenly. Ideal for AI/ML services and serverless workloads, KPA leverages advanced algorithms from [Knative Serving](https://knative.dev/docs/serving/) to react quickly to traffic surges while maintaining stability. For optimal scaling decisions, the autoscaler supports two modes - stable and burst - and intelligently switches between them based on workload patterns.
 
 ## Features
 
-- **Advanced Scaling Algorithms**: Uses libkpa's sliding window algorithms for more stable and predictable scaling
-- **Multiple Metric Support**: Supports Resource, Pods, Object, and External metrics
+- **Advanced Scaling Algorithms**: Uses sliding window algorithms for more stable and predictable scaling
+- **Multiple Metric Support**: Supports Resource, Pods, Object, and External metrics. Additionally supports scraping metrics directly from user pods, with Prometheus integration planned for future releases
 - **Per-Metric Configuration**: Each metric can have its own window size, burst threshold, and scaling rates
 - **HPA-Compatible**: Similar API to Kubernetes HorizontalPodAutoscaler for easy migration
-- **Per-CR Goroutines**: Dedicated goroutine per autoscaler for 1-second metric fetching intervals
+- **Per-CR Goroutines**: Dedicated goroutine per autoscaler for subsecond metric fetching intervals
+- **KEDA Integration**: Specially annotated ScaledObjects can use KPA as a backend for enhanced scaling capabilities
 
 ## Architecture
 
 KPA follows a controller-runtime pattern with:
 - CRD defining KPodAutoscaler resources
 - Controller reconciling KPA objects
-- Per-CR goroutines fetching metrics every second
+- Per-CR goroutines fetching metrics
 - Integration with Kubernetes metrics APIs (Metrics Server, Custom Metrics, External Metrics)
 
 ## Prerequisites
@@ -261,8 +262,7 @@ The E2E tests use KIND (Kubernetes in Docker) to spin up a test cluster:
 
 ```bash
 # Run E2E tests
-cd test/e2e
-go test -v ./...
+make test-e2e
 ```
 
 The E2E tests will:
@@ -376,4 +376,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 - [libkpa](https://github.com/Fedosin/libkpa) for the advanced autoscaling algorithms
 - Kubernetes HPA for the API design inspiration
-- Controller-runtime for the excellent framework 
+- Controller-runtime for the excellent framework
