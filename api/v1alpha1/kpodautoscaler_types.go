@@ -62,12 +62,22 @@ const (
 	AverageValueMetricType MetricTargetType = "AverageValue"
 )
 
+type MetricAggregationAlgorithm string
+
+const (
+	// LinearMetricAggregationAlgorithm is the default algorithm for metrics aggregation.
+	// It is a simple average of the metrics.
+	LinearMetricAggregationAlgorithm MetricAggregationAlgorithm = "linear"
+	// WeightedMetricAggregationAlgorithm is the algorithm for metrics aggregation
+	WeightedMetricAggregationAlgorithm MetricAggregationAlgorithm = "weighted"
+)
+
 // MetricConfig contains configuration for libkpa autoscaler
 type MetricConfig struct {
 	// AggregationAlgorithm specifies the algorithm to use for metrics aggregation
 	// Possible values: "linear" (default) or "weighted"
 	// +optional
-	AggregationAlgorithm string `json:"aggregationAlgorithm,omitempty"`
+	AggregationAlgorithm MetricAggregationAlgorithm `json:"aggregationAlgorithm,omitempty"`
 
 	// MaxScaleUpRate is the maximum rate at which the autoscaler will scale up pods.
 	// It must be greater than 1.0. For example, a value of 2.0 allows scaling up
@@ -78,18 +88,6 @@ type MetricConfig struct {
 	// It must be greater than 1.0. For example, a value of 2.0 allows scaling down
 	// by at most halving the pod count. Default is 2.0.
 	MaxScaleDownRate *resource.Quantity `json:"maxScaleDownRate,omitempty"`
-
-	// TargetValue is the desired value of the scaling metric per pod that we aim to maintain.
-	// This must be less than or equal to TotalValue. Default is 100.0.
-	TargetValue *resource.Quantity `json:"targetValue,omitempty"`
-
-	// TotalValue is the total capacity of the scaling metric that a pod can handle.
-	// Default is 1000.0.
-	TotalValue *resource.Quantity `json:"totalValue,omitempty"`
-
-	// TargetBurstCapacity is the desired burst capacity to maintain without queuing.
-	// If negative, it means unlimited burst capacity. Default is 211.0.
-	TargetBurstCapacity *resource.Quantity `json:"targetBurstCapacity,omitempty"`
 
 	// PanicThreshold is the threshold for entering panic mode, expressed as a
 	// percentage of desired pod count. If the observed load over the panic window

@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	libkpaapi "github.com/Fedosin/libkpa/api"
+	libkpaconfig "github.com/Fedosin/libkpa/config"
 	libkpamanager "github.com/Fedosin/libkpa/manager"
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
@@ -78,6 +78,8 @@ type scalerWorker struct {
 const (
 	deploymentKind  = "Deployment"
 	statefulSetKind = "StatefulSet"
+
+	defaultAggregationAlgorithm = kpav1alpha1.LinearMetricAggregationAlgorithm
 )
 
 // +kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kpodautoscalers,verbs=get;list;watch;create;update;patch;delete
@@ -677,20 +679,9 @@ func (w *scalerWorker) getCurrentReplicas(kpa *kpav1alpha1.KPodAutoscaler) (int3
 // createScaler creates a scaler for a metric spec
 func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTargetRef kpav1alpha1.ScaleTargetRef, namespace string) (*libkpamanager.Scaler, error) {
 	// Create autoscaler config - min/max scale should come from the parent KPA, not metric config
-	config := libkpaapi.AutoscalerConfig{
-		MaxScaleUpRate:        1000.0,
-		MaxScaleDownRate:      2.0,
-		TargetValue:           0.0,
-		TotalValue:            0.0,
-		TargetBurstCapacity:   211.0,
-		PanicThreshold:        2.0,
-		ScaleDownDelay:        5 * time.Second,
-		ActivationScale:       1,
-		StableWindow:          60 * time.Second,
-		PanicWindowPercentage: 10.0,
-	}
+	config := libkpaconfig.NewDefaultAutoscalerConfig()
 
-	targetValue := getTargetValueFromMetricSpec(metricSpec)
+	targetValue, targetType := getTargetValueAndTypeFromMetricSpec(metricSpec)
 	if targetValue == -1.0 {
 		return nil, fmt.Errorf("invalid target value for metric spec")
 	}
@@ -698,7 +689,12 @@ func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTarg
 	var err error
 
 	// Special case for resource metrics with utilization type
-	if metricSpec.Type == kpav1alpha1.ResourceMetricType && metricSpec.Resource.Target.Type == kpav1alpha1.UtilizationMetricType {
+	switch targetType {
+	case kpav1alpha1.UtilizationMetricType:
+		if metricSpec.Type != kpav1alpha1.ResourceMetricType {
+			return nil, fmt.Errorf("utilization metric type is only supported for resource metrics")
+		}
+
 		var quantity k8sresource.Quantity
 
 		switch scaleTargetRef.Kind {
@@ -714,11 +710,15 @@ func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTarg
 			}
 		}
 		config.TargetValue = targetValue * float64(quantity.MilliValue()) / 1000.0
-	} else {
+	case kpav1alpha1.ValueMetricType:
+		config.TotalTargetValue = targetValue
+	case kpav1alpha1.AverageValueMetricType:
 		config.TargetValue = targetValue
+	default:
+		return nil, fmt.Errorf("unknown metric target type: %s", targetType)
 	}
 
-	aggregationAlgorithm := "linear"
+	aggregationAlgorithm := defaultAggregationAlgorithm
 
 	// Apply defaults and config overrides
 	if metricSpec.Config != nil {
@@ -731,18 +731,6 @@ func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTarg
 
 		if mc.MaxScaleDownRate != nil {
 			config.MaxScaleDownRate = mc.MaxScaleDownRate.AsApproximateFloat64()
-		}
-
-		if mc.TargetValue != nil {
-			config.TargetValue = mc.TargetValue.AsApproximateFloat64()
-		}
-
-		if mc.TotalValue != nil {
-			config.TotalValue = mc.TotalValue.AsApproximateFloat64()
-		}
-
-		if mc.TargetBurstCapacity != nil {
-			config.TargetBurstCapacity = mc.TargetBurstCapacity.AsApproximateFloat64()
 		}
 
 		if mc.PanicThreshold != nil {
@@ -770,7 +758,9 @@ func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTarg
 		}
 	}
 
-	scaler, err := libkpamanager.NewScaler(getMetricName(metricSpec), config, aggregationAlgorithm)
+	// TODO: consider adding aggregation algorithm to the scaler config
+
+	scaler, err := libkpamanager.NewScaler(getMetricName(metricSpec), *config, string(aggregationAlgorithm))
 	if err != nil {
 		return nil, err
 	}
@@ -911,35 +901,35 @@ func getMetricName(metricSpec kpav1alpha1.MetricSpec) string {
 	}
 }
 
-// getTargetValue returns the target value for a metric target
-func getTargetValueFromMetricSpec(metricSpec kpav1alpha1.MetricSpec) float64 {
+// getTargetValueAndTypeFromMetricSpec returns the target value for a metric target
+func getTargetValueAndTypeFromMetricSpec(metricSpec kpav1alpha1.MetricSpec) (float64, kpav1alpha1.MetricTargetType) {
 	switch metricSpec.Type {
 	case kpav1alpha1.ResourceMetricType:
-		return getTargetValue(metricSpec.Resource.Target)
+		return getTargetValueAndType(metricSpec.Resource.Target)
 	case kpav1alpha1.PodsMetricType:
-		return getTargetValue(metricSpec.Pods.Target)
+		return getTargetValueAndType(metricSpec.Pods.Target)
 	case kpav1alpha1.ObjectMetricType:
-		return getTargetValue(metricSpec.Object.Target)
+		return getTargetValueAndType(metricSpec.Object.Target)
 	case kpav1alpha1.ExternalMetricType:
-		return getTargetValue(metricSpec.External.Target)
+		return getTargetValueAndType(metricSpec.External.Target)
 	case kpav1alpha1.UserMetricType:
-		return getTargetValue(metricSpec.User.Target)
+		return getTargetValueAndType(metricSpec.User.Target)
 	default:
-		return -1.0
+		return -1.0, ""
 	}
 }
 
-// getTargetValue returns the target value for a metric target
-func getTargetValue(metricTarget kpav1alpha1.MetricTarget) float64 {
+// getTargetValueAndType returns the target value for a metric target
+func getTargetValueAndType(metricTarget kpav1alpha1.MetricTarget) (float64, kpav1alpha1.MetricTargetType) {
 	switch metricTarget.Type {
 	case kpav1alpha1.UtilizationMetricType:
-		return float64(*metricTarget.AverageUtilization)
+		return float64(*metricTarget.AverageUtilization), kpav1alpha1.UtilizationMetricType
 	case kpav1alpha1.ValueMetricType:
-		return metricTarget.Value.AsApproximateFloat64()
+		return metricTarget.Value.AsApproximateFloat64(), kpav1alpha1.ValueMetricType
 	case kpav1alpha1.AverageValueMetricType:
-		return metricTarget.AverageValue.AsApproximateFloat64()
+		return metricTarget.AverageValue.AsApproximateFloat64(), kpav1alpha1.AverageValueMetricType
 	}
-	return -1.0
+	return -1.0, ""
 }
 
 // SetupWithManager sets up the controller with the Manager.

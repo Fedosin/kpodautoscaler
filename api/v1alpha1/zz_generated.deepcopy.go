@@ -201,21 +201,6 @@ func (in *MetricConfig) DeepCopyInto(out *MetricConfig) {
 		x := (*in).DeepCopy()
 		*out = &x
 	}
-	if in.TargetValue != nil {
-		in, out := &in.TargetValue, &out.TargetValue
-		x := (*in).DeepCopy()
-		*out = &x
-	}
-	if in.TotalValue != nil {
-		in, out := &in.TotalValue, &out.TotalValue
-		x := (*in).DeepCopy()
-		*out = &x
-	}
-	if in.TargetBurstCapacity != nil {
-		in, out := &in.TargetBurstCapacity, &out.TargetBurstCapacity
-		x := (*in).DeepCopy()
-		*out = &x
-	}
 	if in.PanicThreshold != nil {
 		in, out := &in.PanicThreshold, &out.PanicThreshold
 		x := (*in).DeepCopy()
