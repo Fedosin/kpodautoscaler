@@ -99,6 +99,26 @@ spec:
                             AggregationAlgorithm specifies the algorithm to use for metrics aggregation
                             Possible values: "linear" (default) or "weighted"
                           type: string
+                        burstThreshold:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: |-
+                            BurstThreshold is the threshold for entering burst mode, expressed as a
+                            percentage of desired pod count. If the observed load over the burst window
+                            exceeds this percentage of the current pod count capacity, burst mode is triggered.
+                            Default is 200 (200%).
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        burstWindowPercentage:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: |-
+                            BurstWindowPercentage is the percentage of the stable window used for
+                            burst mode calculations. Must be in range [1.0, 100.0]. Default is 10.0.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
                         maxScaleDownRate:
                           anyOf:
                           - type: integer
@@ -117,26 +137,6 @@ spec:
                             MaxScaleUpRate is the maximum rate at which the autoscaler will scale up pods.
                             It must be greater than 1.0. For example, a value of 2.0 allows scaling up
                             by at most doubling the pod count. Default is 1000.0.
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        panicThreshold:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          description: |-
-                            PanicThreshold is the threshold for entering panic mode, expressed as a
-                            percentage of desired pod count. If the observed load over the panic window
-                            exceeds this percentage of the current pod count capacity, panic mode is triggered.
-                            Default is 200 (200%).
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        panicWindowPercentage:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          description: |-
-                            PanicWindowPercentage is the percentage of the stable window used for
-                            panic mode calculations. Must be in range [1.0, 100.0]. Default is 10.0.
                           pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                           x-kubernetes-int-or-string: true
                         scaleDownDelay:

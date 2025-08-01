@@ -201,13 +201,13 @@ func (in *MetricConfig) DeepCopyInto(out *MetricConfig) {
 		x := (*in).DeepCopy()
 		*out = &x
 	}
-	if in.PanicThreshold != nil {
-		in, out := &in.PanicThreshold, &out.PanicThreshold
+	if in.BurstThreshold != nil {
+		in, out := &in.BurstThreshold, &out.BurstThreshold
 		x := (*in).DeepCopy()
 		*out = &x
 	}
-	if in.PanicWindowPercentage != nil {
-		in, out := &in.PanicWindowPercentage, &out.PanicWindowPercentage
+	if in.BurstWindowPercentage != nil {
+		in, out := &in.BurstWindowPercentage, &out.BurstWindowPercentage
 		x := (*in).DeepCopy()
 		*out = &x
 	}

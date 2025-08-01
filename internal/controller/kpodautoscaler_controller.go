@@ -733,8 +733,8 @@ func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTarg
 			config.MaxScaleDownRate = mc.MaxScaleDownRate.AsApproximateFloat64()
 		}
 
-		if mc.PanicThreshold != nil {
-			config.PanicThreshold = mc.PanicThreshold.AsApproximateFloat64()
+		if mc.BurstThreshold != nil {
+			config.BurstThreshold = mc.BurstThreshold.AsApproximateFloat64()
 		}
 
 		if mc.ScaleDownDelay != 0 {
@@ -749,8 +749,8 @@ func (w *scalerWorker) createScaler(metricSpec kpav1alpha1.MetricSpec, scaleTarg
 			config.StableWindow = mc.StableWindow
 		}
 
-		if mc.PanicWindowPercentage != nil {
-			config.PanicWindowPercentage = mc.PanicWindowPercentage.AsApproximateFloat64()
+		if mc.BurstWindowPercentage != nil {
+			config.BurstWindowPercentage = mc.BurstWindowPercentage.AsApproximateFloat64()
 		}
 
 		if mc.AggregationAlgorithm != "" {

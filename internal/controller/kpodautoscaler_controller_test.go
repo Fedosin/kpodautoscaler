@@ -169,8 +169,8 @@ var _ = Describe("KPodAutoscaler Controller", func() {
 							},
 							Config: &autoscalingv1alpha1.MetricConfig{
 								StableWindow:          30 * time.Second,
-								PanicThreshold:        resource.NewQuantity(200, resource.DecimalSI),
-								PanicWindowPercentage: resource.NewQuantity(10, resource.DecimalSI),
+								BurstThreshold:        resource.NewQuantity(200, resource.DecimalSI),
+								BurstWindowPercentage: resource.NewQuantity(10, resource.DecimalSI),
 								MaxScaleUpRate:        resource.NewQuantity(1000, resource.DecimalSI),
 								MaxScaleDownRate:      resource.NewQuantity(2, resource.DecimalSI),
 								ScaleDownDelay:        5 * time.Second,
@@ -212,12 +212,12 @@ var _ = Describe("KPodAutoscaler Controller", func() {
 			Expect(createdKPA.Spec.Metrics[0].Type).To(Equal(autoscalingv1alpha1.ResourceMetricType))
 			Expect(createdKPA.Spec.Metrics[0].Resource.Name).To(Equal(corev1.ResourceCPU))
 
-			// Verify panic mode configuration
+			// Verify burst mode configuration
 			config := createdKPA.Spec.Metrics[0].Config
 			Expect(config).NotTo(BeNil())
 			Expect(config.StableWindow).To(Equal(30 * time.Second))
-			Expect(config.PanicThreshold.Value()).To(Equal(int64(200)))
-			Expect(config.PanicWindowPercentage.Value()).To(Equal(int64(10)))
+			Expect(config.BurstThreshold.Value()).To(Equal(int64(200)))
+			Expect(config.BurstWindowPercentage.Value()).To(Equal(int64(10)))
 
 			By("Deleting the KPodAutoscaler")
 			Expect(k8sClient.Delete(ctx, kpa)).To(Succeed())
@@ -409,11 +409,11 @@ var _ = Describe("KPodAutoscaler Controller", func() {
 			Expect(k8sClient.Delete(ctx, kpa)).To(Succeed())
 		})
 
-		It("should handle panic mode configuration", func() {
-			By("Creating a KPodAutoscaler with panic mode settings")
+		It("should handle burst mode configuration", func() {
+			By("Creating a KPodAutoscaler with burst mode settings")
 			kpa := &autoscalingv1alpha1.KPodAutoscaler{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-kpa-panic",
+					Name:      "test-kpa-burst",
 					Namespace: namespace,
 				},
 				Spec: autoscalingv1alpha1.KPodAutoscalerSpec{
@@ -436,8 +436,8 @@ var _ = Describe("KPodAutoscaler Controller", func() {
 							},
 							Config: &autoscalingv1alpha1.MetricConfig{
 								StableWindow:          60 * time.Second,
-								PanicThreshold:        resource.NewQuantity(150, resource.DecimalSI),  // 150% threshold
-								PanicWindowPercentage: resource.NewQuantity(5, resource.DecimalSI),    // 5% of stable window
+								BurstThreshold:        resource.NewQuantity(150, resource.DecimalSI),  // 150% threshold
+								BurstWindowPercentage: resource.NewQuantity(5, resource.DecimalSI),    // 5% of stable window
 								MaxScaleUpRate:        resource.NewQuantity(2000, resource.DecimalSI), // Can double quickly
 								MaxScaleDownRate:      resource.NewQuantity(3, resource.DecimalSI),    // Can scale down by 1/3
 								ScaleDownDelay:        10 * time.Second,
@@ -448,7 +448,7 @@ var _ = Describe("KPodAutoscaler Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, kpa)).To(Succeed())
 
-			By("Verifying panic mode configuration is stored correctly")
+			By("Verifying burst mode configuration is stored correctly")
 			createdKPA := &autoscalingv1alpha1.KPodAutoscaler{}
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, types.NamespacedName{
@@ -460,8 +460,8 @@ var _ = Describe("KPodAutoscaler Controller", func() {
 				}
 				config := createdKPA.Spec.Metrics[0].Config
 				return config != nil &&
-					config.PanicThreshold.Value() == 150 &&
-					config.PanicWindowPercentage.Value() == 5 &&
+					config.BurstThreshold.Value() == 150 &&
+					config.BurstWindowPercentage.Value() == 5 &&
 					config.MaxScaleUpRate.Value() == 2000 &&
 					config.MaxScaleDownRate.Value() == 3
 			}, timeout, interval).Should(BeTrue())
