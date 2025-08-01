@@ -6,7 +6,7 @@ A Kubernetes controller that provides advanced pod autoscaling using algorithms 
 
 - **Advanced Scaling Algorithms**: Uses libkpa's sliding window algorithms for more stable and predictable scaling
 - **Multiple Metric Support**: Supports Resource, Pods, Object, and External metrics
-- **Per-Metric Configuration**: Each metric can have its own window size, panic threshold, and scaling rates
+- **Per-Metric Configuration**: Each metric can have its own window size, burst threshold, and scaling rates
 - **HPA-Compatible**: Similar API to Kubernetes HorizontalPodAutoscaler for easy migration
 - **Per-CR Goroutines**: Dedicated goroutine per autoscaler for 1-second metric fetching intervals
 
@@ -93,7 +93,7 @@ spec:
     config:
       algorithm: "linear"  # or "weighted"
       windowSize: 60s
-      panicWindow: 6s
+      burstWindow: 6s
 ```
 
 ### Advanced Example with Multiple Metrics
@@ -121,10 +121,10 @@ spec:
     config:
       algorithm: "weighted"
       windowSize: 120s
-      panicWindow: 10s
+      burstWindow: 10s
       scaleUpRate: 2.0
       scaleDownRate: 0.5
-      panicThreshold: 200.0
+      burstThreshold: 200.0
   
   # Memory metric
   - type: Resource
@@ -150,7 +150,6 @@ spec:
     config:
       algorithm: "linear"
       windowSize: 60s
-      targetUtilization: 80.0
   
   # External metric (e.g., queue length)
   - type: External
@@ -165,7 +164,7 @@ spec:
         value: "30"
     config:
       windowSize: 120s
-      panicThreshold: 150.0
+      burstThreshold: 150.0
 ```
 
 ## Configuration
@@ -178,12 +177,12 @@ Each metric can have a `config` section with the following options:
 |-------|-------------|---------|
 | `algorithm` | Scaling algorithm: "linear" or "weighted" | "linear" |
 | `windowSize` | Time window for stable metrics | 60s |
-| `panicWindow` | Time window for panic mode metrics | 6s (10% of windowSize) |
+| `burstWindow` | Time window for burst mode metrics | 6s (10% of windowSize) |
 | `scaleUpRate` | Maximum scale up rate | 1000.0 |
 | `scaleDownRate` | Maximum scale down rate | 2.0 |
 | `maxScaleUpRate` | Absolute maximum scale up rate | 1000.0 |
 | `maxScaleDownRate` | Absolute maximum scale down rate | 2.0 |
-| `panicThreshold` | Threshold for entering panic mode (% of target) | 200.0 |
+| `burstThreshold` | Threshold for entering burst mode (% of target) | 200.0 |
 | `stableWindow` | Window size for stable metrics | 60s |
 | `initialScale` | Initial scale when creating autoscaler | 1 |
 | `targetUtilization` | Target utilization percentage | Based on metric target |

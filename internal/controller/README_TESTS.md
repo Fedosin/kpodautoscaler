@@ -9,7 +9,7 @@ The test suite validates the core functionality of the KPodAutoscaler controller
 - Support for both Deployments and StatefulSets
 - Different metric types (CPU, Memory, Custom metrics)
 - Min/Max replica limits
-- Panic mode configuration
+- Burst mode configuration
 - Multiple metrics support
 
 ## Test Structure
@@ -39,11 +39,11 @@ The tests are organized using Ginkgo BDD-style testing framework and use envtest
   - Validates min/max replica configuration
   - Ensures limits are properly stored
 
-### 4. Panic Mode Configuration
-- **Test**: "should handle panic mode configuration"
+### 4. Burst Mode Configuration
+- **Test**: "should handle burst mode configuration"
 - **Coverage**:
-  - Panic threshold settings
-  - Panic window percentage
+  - Burst threshold settings
+  - Burst window percentage
   - Scale up/down rates
   - Scale down delay
 

@@ -89,15 +89,15 @@ type MetricConfig struct {
 	// by at most halving the pod count. Default is 2.0.
 	MaxScaleDownRate *resource.Quantity `json:"maxScaleDownRate,omitempty"`
 
-	// PanicThreshold is the threshold for entering panic mode, expressed as a
-	// percentage of desired pod count. If the observed load over the panic window
-	// exceeds this percentage of the current pod count capacity, panic mode is triggered.
+	// BurstThreshold is the threshold for entering burst mode, expressed as a
+	// percentage of desired pod count. If the observed load over the burst window
+	// exceeds this percentage of the current pod count capacity, burst mode is triggered.
 	// Default is 200 (200%).
-	PanicThreshold *resource.Quantity `json:"panicThreshold,omitempty"`
+	BurstThreshold *resource.Quantity `json:"burstThreshold,omitempty"`
 
-	// PanicWindowPercentage is the percentage of the stable window used for
-	// panic mode calculations. Must be in range [1.0, 100.0]. Default is 10.0.
-	PanicWindowPercentage *resource.Quantity `json:"panicWindowPercentage,omitempty"`
+	// BurstWindowPercentage is the percentage of the stable window used for
+	// burst mode calculations. Must be in range [1.0, 100.0]. Default is 10.0.
+	BurstWindowPercentage *resource.Quantity `json:"burstWindowPercentage,omitempty"`
 
 	// StableWindow is the time window over which metrics are averaged for
 	// scaling decisions. Must be between 5s and 600s. Default is 60s.
