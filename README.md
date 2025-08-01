@@ -190,16 +190,34 @@ Each metric can have a `config` section with the following options:
 ### Project Structure
 
 ```
-├── api/v1alpha1/          # CRD types
-├── controllers/           # Reconciliation logic
-├── cmd/manager/          # Controller entrypoint
-├── pkg/
-│   ├── metrics/          # Metrics API wrappers
-│   └── libkpa-integration/ # libkpa integration
-├── charts/kpodautoscaler/ # Helm chart
-└── tests/
-    ├── unit/             # Unit tests
-    └── e2e/              # End-to-end tests
+├── api/v1alpha1/          # CRD types and API definitions
+├── bin/                   # Build output directory
+├── cmd/                   # Application entrypoint
+│   └── main.go           # Controller manager main
+├── config/                # Kubernetes manifests
+│   ├── crd/              # CustomResourceDefinition manifests
+│   ├── default/          # Default configuration patches
+│   ├── manager/          # Controller manager deployment
+│   ├── network-policy/   # Network policies
+│   ├── prometheus/       # Prometheus monitoring config
+│   ├── rbac/             # RBAC roles and bindings
+│   └── samples/          # Sample KPodAutoscaler resources
+├── helm/                  
+│   └── kpodautoscaler/   # Helm chart
+├── internal/              # Private application code
+│   ├── controller/       # Reconciliation logic
+│   └── pkg/              # Internal packages
+│       ├── metrics/      # Metrics collection and aggregation
+│       ├── resourcerequests/ # Resource request calculations
+│       └── scraper/      # User metrics scraping
+├── scripts/               # Development and deployment scripts
+├── test/                  # Test files
+│   ├── e2e/              # End-to-end tests
+│   ├── manifests/        # Test manifests
+│   └── utils/            # Test utilities
+├── Dockerfile             # Container image build
+├── Makefile              # Build and development tasks
+└── PROJECT               # Kubebuilder project metadata
 ```
 
 ### Building
@@ -230,7 +248,7 @@ make docker-build IMG=controller:latest
 make test
 
 # Run specific package tests
-go test ./pkg/libkpa-integration/...
+go test ./internal/pkg/...
 
 # Run with coverage
 go test -coverprofile=coverage.out ./...
@@ -243,7 +261,7 @@ The E2E tests use KIND (Kubernetes in Docker) to spin up a test cluster:
 
 ```bash
 # Run E2E tests
-cd tests/e2e
+cd test/e2e
 go test -v ./...
 ```
 
@@ -274,7 +292,7 @@ The E2E tests will:
 
 ## Helm Chart
 
-The Helm chart is located in `charts/kpodautoscaler/` and includes:
+The Helm chart is located in `helm/kpodautoscaler/` and includes:
 
 - CRD installation
 - Controller deployment
