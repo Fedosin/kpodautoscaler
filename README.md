@@ -91,9 +91,9 @@ spec:
         type: Utilization
         averageUtilization: 70
     config:
-      algorithm: "linear"  # or "weighted"
-      windowSize: 60s
-      burstWindow: 6s
+      aggregationAlgorithm: "linear"  # or "weighted"
+      stableWindow: 60s
+      burstWindowPercentage: 10.0
 ```
 
 ### Advanced Example with Multiple Metrics
@@ -119,11 +119,11 @@ spec:
         type: Utilization
         averageUtilization: 80
     config:
-      algorithm: "weighted"
-      windowSize: 120s
-      burstWindow: 10s
-      scaleUpRate: 2.0
-      scaleDownRate: 0.5
+      aggregationAlgorithm: "weighted"
+      stableWindow: 120s
+      burstWindowPercentage: 8.33
+      maxScaleUpRate: 2.0
+      maxScaleDownRate: 0.5
       burstThreshold: 200.0
   
   # Memory metric
@@ -134,7 +134,7 @@ spec:
         type: AverageValue
         averageValue: "1Gi"
     config:
-      windowSize: 90s
+      stableWindow: 90s
   
   # Custom metric from Prometheus
   - type: Pods
@@ -148,8 +148,8 @@ spec:
         type: AverageValue
         averageValue: "100"
     config:
-      algorithm: "linear"
-      windowSize: 60s
+      aggregationAlgorithm: "linear"
+      stableWindow: 60s
   
   # External metric (e.g., queue length)
   - type: External
@@ -163,7 +163,7 @@ spec:
         type: Value
         value: "30"
     config:
-      windowSize: 120s
+      stableWindow: 120s
       burstThreshold: 150.0
 ```
 
@@ -173,19 +173,17 @@ spec:
 
 Each metric can have a `config` section with the following options:
 
-| Field | Description | Default |
-|-------|-------------|---------|
-| `algorithm` | Scaling algorithm: "linear" or "weighted" | "linear" |
-| `windowSize` | Time window for stable metrics | 60s |
-| `burstWindow` | Time window for burst mode metrics | 6s (10% of windowSize) |
-| `scaleUpRate` | Maximum scale up rate | 1000.0 |
-| `scaleDownRate` | Maximum scale down rate | 2.0 |
-| `maxScaleUpRate` | Absolute maximum scale up rate | 1000.0 |
-| `maxScaleDownRate` | Absolute maximum scale down rate | 2.0 |
-| `burstThreshold` | Threshold for entering burst mode (% of target) | 200.0 |
-| `stableWindow` | Window size for stable metrics | 60s |
-| `initialScale` | Initial scale when creating autoscaler | 1 |
-| `targetUtilization` | Target utilization percentage | Based on metric target |
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `aggregationAlgorithm` | string | Metrics aggregation algorithm: "linear" or "weighted" | "linear" |
+| `maxScaleUpRate` | resource.Quantity | Maximum rate at which the autoscaler will scale up pods (must be > 1.0) | 1000.0 |
+| `maxScaleDownRate` | resource.Quantity | Maximum rate at which the autoscaler will scale down pods (must be > 1.0) | 2.0 |
+| `burstThreshold` | resource.Quantity | Threshold for entering burst mode (% of desired pod count) | 200 (200%) |
+| `burstWindowPercentage` | resource.Quantity | Percentage of stable window used for burst mode calculations (1.0-100.0) | 10.0 |
+| `stableWindow` | time.Duration | Time window over which metrics are averaged for scaling decisions (5s-600s) | 60s |
+| `scaleDownDelay` | time.Duration | Minimum time that must pass at reduced load before scaling down | 0s |
+| `activationScale` | int32 | Minimum scale to use when scaling from zero (must be >= 1) | 1 |
+| `scaleToZeroGracePeriod` | time.Duration | Time to wait before scaling to zero after the service becomes idle | 30s |
 
 ## Development
 
