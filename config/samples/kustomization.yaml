@@ -1,4 +1,5 @@
 ## Append samples of your project ##
 resources:
 - autoscaling_v1alpha1_kpodautoscaler.yaml
+- autoscaling_v1alpha1_kproxy.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

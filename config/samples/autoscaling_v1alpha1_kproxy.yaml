@@ -1,0 +1,34 @@
+apiVersion: autoscaling.kpodautoscaler.io/v1alpha1
+kind: KProxy
+metadata:
+  labels:
+    app.kubernetes.io/name: kpodautoscaler
+    app.kubernetes.io/managed-by: kustomize
+  name: web-kproxy
+  namespace: default
+spec:
+  targetRef:
+    name: web
+    namespace: default
+    port: 8080
+    selector:
+      app: web
+  bufferBytes: 1048576
+  maxPendingRequests: 1024
+  retry:
+    retryOn: "5xx,connect-failure,refused-stream"
+    numRetries: 3
+    baseIntervalMs: 25
+    maxIntervalMs: 250
+  externalService:
+    name: web-kproxy
+    type: ClusterIP
+    port: 80
+  headlessService:
+    name: web-internal
+  envoy:
+    adminPort: 9901
+    drainSeconds: 25
+    listenerPort: 8080
+    statPrefix: ingresshttp
+    disableIstioInjection: true
