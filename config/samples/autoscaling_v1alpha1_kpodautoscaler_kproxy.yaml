@@ -15,4 +15,4 @@ spec:
         name: web-kproxy
         target:
           type: AverageValue
-          averageValue: "10"
+          averageValue: "2"

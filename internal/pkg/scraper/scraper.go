@@ -9,6 +9,7 @@ import (
 	"time"
 
 	autoscalingv1alpha1 "github.com/Fedosin/kpodautoscaler/api/v1alpha1"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,6 +23,14 @@ import (
 type InsufficientDataError struct {
 	message string
 }
+
+const (
+	envoyMetricName = "envoy_http_downstream_rq_total"
+	envoyAdminPort  = 9901
+	envoyStatsPath  = "/stats/prometheus"
+	envoyLabelKey   = "envoy_http_conn_manager_prefix"
+	envoyLabelValue = "ingresshttp"
+)
 
 func (e InsufficientDataError) Error() string {
 	return e.message
@@ -146,7 +155,7 @@ func (s *PodMetricScraper) GetMetricValue(ctx context.Context, kpa *autoscalingv
 		}
 
 		metricURL := fmt.Sprintf("http://%s:%d%s", podIP, port, path)
-		value, errScrape := s.scrapeMetric(ctx, metricURL, metricSource.Metric.Name)
+		value, errScrape := s.scrapeMetric(ctx, metricURL, metricSource.Metric.Name, nil) // No label filters for user metrics
 		if errScrape != nil {
 			// Check if it's an InsufficientDataError
 			if _, ok := errScrape.(InsufficientDataError); ok {
@@ -219,12 +228,9 @@ func (s *PodMetricScraper) GetKProxyMetricValue(ctx context.Context, kpa *autosc
 	var podsWithMetric int
 	var insufficientDataCount int
 
-	// Hardcoded values for KProxy Envoy metrics
-	const (
-		envoyMetricName = "envoy_http_downstream_rq_total"
-		envoyAdminPort  = 9901
-		envoyStatsPath  = "/stats/prometheus"
-	)
+	labelFilters := map[string]string{
+		envoyLabelKey: envoyLabelValue,
+	}
 
 	for _, pod := range pods.Items {
 		if pod.Status.Phase != v1.PodRunning || pod.DeletionTimestamp != nil {
@@ -237,7 +243,7 @@ func (s *PodMetricScraper) GetKProxyMetricValue(ctx context.Context, kpa *autosc
 		}
 
 		metricURL := fmt.Sprintf("http://%s:%d%s", podIP, envoyAdminPort, envoyStatsPath)
-		value, errScrape := s.scrapeMetric(ctx, metricURL, envoyMetricName)
+		value, errScrape := s.scrapeMetric(ctx, metricURL, envoyMetricName, labelFilters)
 		if errScrape != nil {
 			// Check if it's an InsufficientDataError
 			if _, ok := errScrape.(InsufficientDataError); ok {
@@ -255,29 +261,27 @@ func (s *PodMetricScraper) GetKProxyMetricValue(ctx context.Context, kpa *autosc
 
 	// If all pods that we tried to scrape had insufficient data, return the error
 	if insufficientDataCount > 0 && podsWithMetric == 0 {
+		labelStr := ""
+		if len(labelFilters) > 0 {
+			labelStr = fmt.Sprintf(" with labels %v", labelFilters)
+		}
 		return 0, InsufficientDataError{
-			message: fmt.Sprintf("insufficient data to calculate rate for counter metric %s on all KProxy pods", envoyMetricName),
+			message: fmt.Sprintf("insufficient data to calculate rate for counter metric %s%s on all KProxy pods", envoyMetricName, labelStr),
 		}
 	}
 
 	if podsWithMetric == 0 {
-		return 0, fmt.Errorf("no KProxy pods returned the metric %s", envoyMetricName)
+		labelStr := ""
+		if len(labelFilters) > 0 {
+			labelStr = fmt.Sprintf(" with labels %v", labelFilters)
+		}
+		return 0, fmt.Errorf("no KProxy pods returned the metric %s%s", envoyMetricName, labelStr)
 	}
 
-	var result int64
-	switch kproxySource.Target.Type {
-	case autoscalingv1alpha1.AverageValueMetricType:
-		result = int64(totalValue / float64(podsWithMetric))
-	case autoscalingv1alpha1.ValueMetricType:
-		result = int64(totalValue)
-	default:
-		return 0, fmt.Errorf("unsupported target type: %s", kproxySource.Target.Type)
-	}
-
-	return result, nil
+	return int64(totalValue / float64(podsWithMetric)), nil
 }
 
-func (s *PodMetricScraper) scrapeMetric(ctx context.Context, url string, metricName string) (float64, error) {
+func (s *PodMetricScraper) scrapeMetric(ctx context.Context, url string, metricName string, labelFilters map[string]string) (float64, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create request: %w", err)
@@ -313,9 +317,16 @@ func (s *PodMetricScraper) scrapeMetric(ctx context.Context, url string, metricN
 
 	var total float64
 	isCounter := false
+	matchingMetrics := 0
 
 	// The metric can have multiple samples (e.g. from multiple goroutines), so we average them.
 	for _, m := range mf.Metric {
+		// Check if the metric labels match the filters
+		if !matchesLabelFilters(m, labelFilters) {
+			continue
+		}
+
+		matchingMetrics++
 		if m.Gauge != nil && m.Gauge.Value != nil {
 			total += *m.Gauge.Value
 		} else if m.Counter != nil && m.Counter.Value != nil {
@@ -325,16 +336,25 @@ func (s *PodMetricScraper) scrapeMetric(ctx context.Context, url string, metricN
 		// Note: Histograms and Summaries are not supported yet.
 	}
 
-	if len(mf.Metric) == 0 {
-		return 0, fmt.Errorf("no samples found for metric %s", metricName)
+	if matchingMetrics == 0 {
+		labelStr := ""
+		if len(labelFilters) > 0 {
+			labelStr = fmt.Sprintf(" with labels %v", labelFilters)
+		}
+		return 0, fmt.Errorf("no samples found for metric %s%s", metricName, labelStr)
 	}
 
 	// Calculate the average value of the metric samples.
-	avgValue := total / float64(len(mf.Metric))
+	avgValue := total / float64(matchingMetrics)
 
 	// For Counter metrics, calculate the rate (difference per second)
 	if isCounter {
-		key := fmt.Sprintf("%s|%s", url, metricName)
+		// Include labels in the key to distinguish different label combinations
+		labelsStr := ""
+		if len(labelFilters) > 0 {
+			labelsStr = fmt.Sprintf("|%v", labelFilters)
+		}
+		key := fmt.Sprintf("%s|%s%s", url, metricName, labelsStr)
 		key = base64.StdEncoding.EncodeToString([]byte(key))
 
 		s.mu.Lock()
@@ -376,6 +396,33 @@ func (s *PodMetricScraper) scrapeMetric(ctx context.Context, url string, metricN
 
 	// For Gauge metrics, return the value as-is
 	return avgValue, nil
+}
+
+// matchesLabelFilters checks if a metric's labels match the given filters
+func matchesLabelFilters(metric *dto.Metric, labelFilters map[string]string) bool {
+	// If no filters are specified, all metrics match
+	if len(labelFilters) == 0 {
+		return true
+	}
+
+	// Check each filter
+	for filterKey, filterValue := range labelFilters {
+		found := false
+		for _, label := range metric.Label {
+			if label.Name != nil && *label.Name == filterKey {
+				if label.Value != nil && *label.Value == filterValue {
+					found = true
+					break
+				}
+			}
+		}
+		// If any filter doesn't match, the metric doesn't match
+		if !found {
+			return false
+		}
+	}
+
+	return true
 }
 
 func resolvePort(pod *v1.Pod, portRef intstr.IntOrString) (int, error) {
