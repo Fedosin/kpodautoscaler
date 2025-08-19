@@ -57,13 +57,13 @@ const (
 	appLabelKey           = "app"
 )
 
-//+kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kproxies,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kproxies/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kproxies/finalizers,verbs=update
-//+kubebuilder:rbac:groups="",resources=services;configmaps;events,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="apps",resources=deployments,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=endpoints;pods,verbs=get;list;watch
-//+kubebuilder:rbac:groups="discovery.k8s.io",resources=endpointslices,verbs=get;list;watch
+// +kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kproxies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kproxies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=autoscaling.kpodautoscaler.io,resources=kproxies/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=services;configmaps;events,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="apps",resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=endpoints;pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="discovery.k8s.io",resources=endpointslices,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -88,7 +88,7 @@ func (r *KProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 	var targetDep appsv1.Deployment
 	if err := r.Get(ctx, types.NamespacedName{Namespace: targetNS, Name: kproxy.Spec.TargetRef.Name}, &targetDep); err != nil {
-		r.setCondition(ctx, &kproxy, condTargetsDiscovered, metav1.ConditionFalse, "TargetMissing", fmt.Sprintf("Deployment %s/%s not found", targetNS, kproxy.Spec.TargetRef.Name))
+		r.setCondition(&kproxy, condTargetsDiscovered, metav1.ConditionFalse, "TargetMissing", fmt.Sprintf("Deployment %s/%s not found", targetNS, kproxy.Spec.TargetRef.Name))
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, client.IgnoreNotFound(err)
 	}
 
@@ -104,12 +104,12 @@ func (r *KProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 	}
 	if len(selector) == 0 {
-		r.setCondition(ctx, &kproxy, condTargetsDiscovered, metav1.ConditionFalse, "NoSelector", "No labels available to select target pods")
+		r.setCondition(&kproxy, condTargetsDiscovered, metav1.ConditionFalse, "NoSelector", "No labels available to select target pods")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	// Count target endpoints (for status)
-	endpointsCount, err := r.countReadyEndpoints(ctx, targetNS, selector, int(kproxy.Spec.TargetRef.Port))
+	endpointsCount, err := r.countReadyEndpoints(ctx, targetNS, selector)
 	if err != nil {
 		logger.Error(err, "countReadyEndpoints failed")
 	}
@@ -154,8 +154,8 @@ func (r *KProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// Update status
-	r.setCondition(ctx, &kproxy, condTargetsDiscovered, metav1.ConditionTrue, "OK", fmt.Sprintf("Found %d target endpoints", endpointsCount))
-	r.setCondition(ctx, &kproxy, condKProxyAvailable, metav1.ConditionTrue, "Reconciled", "KProxy resources are up to date")
+	r.setCondition(&kproxy, condTargetsDiscovered, metav1.ConditionTrue, "OK", fmt.Sprintf("Found %d target endpoints", endpointsCount))
+	r.setCondition(&kproxy, condKProxyAvailable, metav1.ConditionTrue, "Reconciled", "KProxy resources are up to date")
 	kproxy.Status.ObservedGeneration = kproxy.Generation
 	kproxy.Status.TargetEndpointCount = endpointsCount
 	kproxy.Status.KProxyDeploymentName = deployName
@@ -305,7 +305,7 @@ func (r *KProxyReconciler) reconcileExternalService(ctx context.Context, kproxy 
 	return err
 }
 
-func (r *KProxyReconciler) countReadyEndpoints(ctx context.Context, ns string, selector map[string]string, port int) (int32, error) {
+func (r *KProxyReconciler) countReadyEndpoints(ctx context.Context, ns string, selector map[string]string) (int32, error) {
 	var slices discoveryv1.EndpointSliceList
 	if err := r.List(ctx, &slices, client.InNamespace(ns), client.MatchingLabelsSelector{Selector: labels.SelectorFromSet(selector)}); err != nil {
 		return 0, err
@@ -450,7 +450,7 @@ admin:
 
 	// Trim leading spaces uniformly
 	lines := strings.Split(y, "\n")
-	var out []string
+	out := make([]string, 0, len(lines))
 	for _, l := range lines {
 		out = append(out, strings.TrimRight(l, " "))
 	}
@@ -477,7 +477,7 @@ func mergeStringMap(dst, src map[string]string) map[string]string {
 	return dst
 }
 
-func (r *KProxyReconciler) setCondition(ctx context.Context, px *autoscalingv1alpha1.KProxy, cond string, status metav1.ConditionStatus, reason, msg string) {
+func (r *KProxyReconciler) setCondition(px *autoscalingv1alpha1.KProxy, cond string, status metav1.ConditionStatus, reason, msg string) {
 	now := metav1.Now()
 	newCond := metav1.Condition{
 		Type:               cond,

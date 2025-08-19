@@ -33,8 +33,8 @@ type counterValue struct {
 	timestamp time.Time
 }
 
-// UserScraper scrapes metrics from user-defined endpoints.
-type UserScraper struct {
+// PodMetricScraper scrapes metrics from user-defined endpoints.
+type PodMetricScraper struct {
 	kubeClient kubernetes.Interface
 	httpClient *http.Client
 	// counterStore stores previous counter values for rate calculation
@@ -43,9 +43,9 @@ type UserScraper struct {
 	mu           sync.RWMutex
 }
 
-// NewUserScraper creates a new UserScraper.
-func NewUserScraper(kubeClient kubernetes.Interface) *UserScraper {
-	s := &UserScraper{
+// NewPodMetricScraper creates a new PodMetricScraper.
+func NewPodMetricScraper(kubeClient kubernetes.Interface) *PodMetricScraper {
+	s := &PodMetricScraper{
 		kubeClient: kubeClient,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
@@ -60,7 +60,7 @@ func NewUserScraper(kubeClient kubernetes.Interface) *UserScraper {
 }
 
 // cleanupCounterStore periodically removes old counter values to prevent memory leaks
-func (s *UserScraper) cleanupCounterStore() {
+func (s *PodMetricScraper) cleanupCounterStore() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
@@ -81,7 +81,7 @@ func (s *UserScraper) cleanupCounterStore() {
 // GetMetricValue fetches and calculates the metric value for a given KPodAutoscaler and UserMetricSource.
 // For Counter metrics, it calculates the rate (increase per second) by comparing with the previous value.
 // If there's no previous value for a Counter metric, it returns an InsufficientDataError.
-func (s *UserScraper) GetMetricValue(ctx context.Context, kpa *autoscalingv1alpha1.KPodAutoscaler, metricSource *autoscalingv1alpha1.UserMetricSource) (int64, error) {
+func (s *PodMetricScraper) GetMetricValue(ctx context.Context, kpa *autoscalingv1alpha1.KPodAutoscaler, metricSource *autoscalingv1alpha1.UserMetricSource) (int64, error) {
 	scaleTargetRef := kpa.Spec.ScaleTargetRef
 	namespace := kpa.Namespace
 
@@ -186,7 +186,98 @@ func (s *UserScraper) GetMetricValue(ctx context.Context, kpa *autoscalingv1alph
 	return result, nil
 }
 
-func (s *UserScraper) scrapeMetric(ctx context.Context, url string, metricName string) (float64, error) {
+// GetKProxyMetricValue fetches the metric value from a KProxy deployment's Envoy pod.
+// It reads the KProxy object to get the deployment name, then scrapes the Envoy metric.
+func (s *PodMetricScraper) GetKProxyMetricValue(ctx context.Context, kpa *autoscalingv1alpha1.KPodAutoscaler, kproxySource *autoscalingv1alpha1.KProxyMetricSource, kproxy *autoscalingv1alpha1.KProxy) (int64, error) {
+
+	// Get the KProxy deployment name from the status
+	if kproxy.Status.KProxyDeploymentName == "" {
+		return 0, fmt.Errorf("KProxy %s does not have a deployment name in status", kproxySource.Name)
+	}
+
+	// Get pods for the KProxy deployment
+	deployment, err := s.kubeClient.AppsV1().Deployments(kpa.Namespace).Get(ctx, kproxy.Status.KProxyDeploymentName, metav1.GetOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("failed to get KProxy deployment %s: %w", kproxy.Status.KProxyDeploymentName, err)
+	}
+
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse selector from KProxy deployment %s: %w", kproxy.Status.KProxyDeploymentName, err)
+	}
+
+	pods, err := s.kubeClient.CoreV1().Pods(kpa.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list KProxy pods: %w", err)
+	}
+
+	if len(pods.Items) == 0 {
+		return 0, fmt.Errorf("no pods found for KProxy deployment %s", kproxy.Status.KProxyDeploymentName)
+	}
+
+	var totalValue float64
+	var podsWithMetric int
+	var insufficientDataCount int
+
+	// Hardcoded values for KProxy Envoy metrics
+	const (
+		envoyMetricName = "envoy_http_downstream_rq_total"
+		envoyAdminPort  = 9901
+		envoyStatsPath  = "/stats/prometheus"
+	)
+
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != v1.PodRunning || pod.DeletionTimestamp != nil {
+			continue
+		}
+		podIP := pod.Status.PodIP
+		if podIP == "" {
+			klog.Warningf("KProxy pod %s/%s has no IP", pod.Namespace, pod.Name)
+			continue
+		}
+
+		metricURL := fmt.Sprintf("http://%s:%d%s", podIP, envoyAdminPort, envoyStatsPath)
+		value, errScrape := s.scrapeMetric(ctx, metricURL, envoyMetricName)
+		if errScrape != nil {
+			// Check if it's an InsufficientDataError
+			if _, ok := errScrape.(InsufficientDataError); ok {
+				insufficientDataCount++
+				klog.V(4).Infof("Insufficient data for counter metric from KProxy pod %s/%s: %v", pod.Namespace, pod.Name, errScrape)
+				continue
+			}
+			klog.Warningf("Failed to scrape metric from KProxy pod %s/%s: %v", pod.Namespace, pod.Name, errScrape)
+			continue
+		}
+
+		totalValue += value
+		podsWithMetric++
+	}
+
+	// If all pods that we tried to scrape had insufficient data, return the error
+	if insufficientDataCount > 0 && podsWithMetric == 0 {
+		return 0, InsufficientDataError{
+			message: fmt.Sprintf("insufficient data to calculate rate for counter metric %s on all KProxy pods", envoyMetricName),
+		}
+	}
+
+	if podsWithMetric == 0 {
+		return 0, fmt.Errorf("no KProxy pods returned the metric %s", envoyMetricName)
+	}
+
+	var result int64
+	switch kproxySource.Target.Type {
+	case autoscalingv1alpha1.AverageValueMetricType:
+		result = int64(totalValue / float64(podsWithMetric))
+	case autoscalingv1alpha1.ValueMetricType:
+		result = int64(totalValue)
+	default:
+		return 0, fmt.Errorf("unsupported target type: %s", kproxySource.Target.Type)
+	}
+
+	return result, nil
+}
+
+func (s *PodMetricScraper) scrapeMetric(ctx context.Context, url string, metricName string) (float64, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create request: %w", err)

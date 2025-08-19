@@ -265,6 +265,53 @@ spec:
                       - metric
                       - target
                       type: object
+                    kproxy:
+                      description: kproxy refers to a metric scraped from a KProxy
+                        deployment's Envoy pod.
+                      properties:
+                        name:
+                          description: Name is the name of the KProxy object.
+                          type: string
+                        target:
+                          description: Target specifies the target value for the given
+                            metric.
+                          properties:
+                            averageUtilization:
+                              description: |-
+                                averageUtilization is the target value of the average of the
+                                resource metric across all relevant pods, represented as a percentage of
+                                the requested value of the resource for the pods.
+                                Currently only valid for Resource metric source type
+                              format: int32
+                              type: integer
+                            averageValue:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: |-
+                                averageValue is the target value of the average of the
+                                metric across all relevant pods (as a quantity)
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            type:
+                              description: type represents whether the metric type
+                                is Utilization, Value, or AverageValue
+                              type: string
+                            value:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: value is the target value of the metric
+                                (as a quantity).
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                          required:
+                          - type
+                          type: object
+                      required:
+                      - name
+                      - target
+                      type: object
                     object:
                       description: |-
                         object refers to a metric describing a single kubernetes object

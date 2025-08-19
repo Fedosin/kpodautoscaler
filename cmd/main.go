@@ -212,15 +212,15 @@ func main() {
 		setupLog.Error(err, "unable to create clientset")
 		os.Exit(1)
 	}
-	userScraper := scraper.NewUserScraper(clientset)
+	podMetricScraper := scraper.NewPodMetricScraper(clientset)
 
 	if err = (&controller.KPodAutoscalerReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		Log:           ctrl.Log.WithName("controllers").WithName("KPodAutoscaler"),
-		MetricsClient: metricsClient,
-		UserScraper:   userScraper,
-		Recorder:      mgr.GetEventRecorderFor("kpodautoscaler-controller"),
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		Log:              ctrl.Log.WithName("controllers").WithName("KPodAutoscaler"),
+		MetricsClient:    metricsClient,
+		PodMetricScraper: podMetricScraper,
+		Recorder:         mgr.GetEventRecorderFor("kpodautoscaler-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KPodAutoscaler")
 		os.Exit(1)

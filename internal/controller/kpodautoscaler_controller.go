@@ -48,9 +48,9 @@ import (
 // KPodAutoscalerReconciler reconciles a KPodAutoscaler object
 type KPodAutoscalerReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	MetricsClient *metrics.MetricsClient
-	UserScraper   *scraper.UserScraper
+	Scheme           *runtime.Scheme
+	MetricsClient    *metrics.MetricsClient
+	PodMetricScraper *scraper.PodMetricScraper
 
 	Log logr.Logger
 	// Recorder for events
@@ -532,6 +532,8 @@ func (w *scalerWorker) collectMetric(ctx context.Context, metricSpec kpav1alpha1
 		return w.collectExternalMetric(ctx, metricSpec.External, kpa)
 	case kpav1alpha1.UserMetricType:
 		return w.collectUserMetric(ctx, metricSpec.User, kpa)
+	case kpav1alpha1.KProxyMetricType:
+		return w.collectKProxyMetric(ctx, metricSpec.KProxy, kpa)
 	default:
 		return 0, fmt.Errorf("unknown metric type: %s", metricSpec.Type)
 	}
@@ -872,11 +874,37 @@ func (w *scalerWorker) collectUserMetric(ctx context.Context, userMetric *kpav1a
 	if userMetric == nil {
 		return 0, fmt.Errorf("user metric source is nil")
 	}
-	if w.reconciler.UserScraper == nil {
-		return 0, fmt.Errorf("UserScraper not initialized")
+	if w.reconciler.PodMetricScraper == nil {
+		return 0, fmt.Errorf("PodMetricScraper not initialized")
 	}
 
-	val, err := w.reconciler.UserScraper.GetMetricValue(ctx, kpa, userMetric)
+	val, err := w.reconciler.PodMetricScraper.GetMetricValue(ctx, kpa, userMetric)
+	if err != nil {
+		return 0, err
+	}
+	return float64(val), nil
+}
+
+// collectKProxyMetric collects metrics from a KProxy deployment's Envoy pod
+func (w *scalerWorker) collectKProxyMetric(ctx context.Context, kproxyMetric *kpav1alpha1.KProxyMetricSource, kpa *kpav1alpha1.KPodAutoscaler) (float64, error) {
+	if kproxyMetric == nil {
+		return 0, fmt.Errorf("kproxy metric source is nil")
+	}
+	if w.reconciler.PodMetricScraper == nil {
+		return 0, fmt.Errorf("PodMetricScraper not initialized")
+	}
+
+	// Get the KProxy object
+	kproxy := &kpav1alpha1.KProxy{}
+	key := types.NamespacedName{
+		Namespace: kpa.Namespace,
+		Name:      kproxyMetric.Name,
+	}
+	if err := w.reconciler.Get(ctx, key, kproxy); err != nil {
+		return 0, fmt.Errorf("failed to get KProxy %s: %w", kproxyMetric.Name, err)
+	}
+
+	val, err := w.reconciler.PodMetricScraper.GetKProxyMetricValue(ctx, kpa, kproxyMetric, kproxy)
 	if err != nil {
 		return 0, err
 	}
@@ -896,6 +924,9 @@ func getMetricName(metricSpec kpav1alpha1.MetricSpec) string {
 		return metricSpec.External.Metric.Name
 	case kpav1alpha1.UserMetricType:
 		return metricSpec.User.Metric.Name
+	case kpav1alpha1.KProxyMetricType:
+		// For KProxy, we always use the same Envoy metric
+		return "envoy_http_downstream_rq_total"
 	default:
 		return ""
 	}
@@ -914,6 +945,8 @@ func getTargetValueAndTypeFromMetricSpec(metricSpec kpav1alpha1.MetricSpec) (flo
 		return getTargetValueAndType(metricSpec.External.Target)
 	case kpav1alpha1.UserMetricType:
 		return getTargetValueAndType(metricSpec.User.Target)
+	case kpav1alpha1.KProxyMetricType:
+		return getTargetValueAndType(metricSpec.KProxy.Target)
 	default:
 		return -1.0, ""
 	}

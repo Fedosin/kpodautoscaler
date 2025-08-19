@@ -1,0 +1,18 @@
+apiVersion: autoscaling.kpodautoscaler.io/v1alpha1
+kind: KPodAutoscaler
+metadata:
+  name: web-kproxy
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 0
+  maxReplicas: 10
+  metrics:
+    - type: KProxy
+      kproxy:
+        name: web-kproxy
+        target:
+          type: AverageValue
+          averageValue: "10"

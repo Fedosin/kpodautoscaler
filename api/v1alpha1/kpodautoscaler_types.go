@@ -47,6 +47,8 @@ const (
 	ExternalMetricType KPodAutoscalerMetricType = "External"
 	// UserMetricType is a metric scraped directly from the pod.
 	UserMetricType KPodAutoscalerMetricType = "User"
+	// KProxyMetricType is a metric scraped from a KProxy deployment's Envoy pod.
+	KProxyMetricType KPodAutoscalerMetricType = "KProxy"
 )
 
 // MetricTargetType specifies the type of metric being targeted, and should be either
@@ -198,6 +200,14 @@ type UserMetricSource struct {
 	Target MetricTarget `json:"target"`
 }
 
+// KProxyMetricSource indicates how to scale on a metric scraped from a KProxy deployment's Envoy pod.
+type KProxyMetricSource struct {
+	// Name is the name of the KProxy object.
+	Name string `json:"name"`
+	// Target specifies the target value for the given metric.
+	Target MetricTarget `json:"target"`
+}
+
 // MetricIdentifier defines the name and optionally selector for a metric
 type MetricIdentifier struct {
 	// name is the name of the given metric
@@ -257,6 +267,9 @@ type MetricSpec struct {
 	// user refers to a metric scraped directly from the pod.
 	// +optional
 	User *UserMetricSource `json:"user,omitempty"`
+	// kproxy refers to a metric scraped from a KProxy deployment's Envoy pod.
+	// +optional
+	KProxy *KProxyMetricSource `json:"kproxy,omitempty"`
 }
 
 // ScaleTargetRef contains reference to the scalable resource

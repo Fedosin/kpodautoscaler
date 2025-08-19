@@ -142,9 +142,9 @@ type KProxyStatus struct {
 	ConfigHash           string             `json:"configHash,omitempty"`
 }
 
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
-//+kubebuilder:resource:path=kproxies,scope=Namespaced,shortName=kpx
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:path=kproxies,scope=Namespaced,shortName=kpx
 
 // KProxy is the Schema for the kproxies API
 type KProxy struct {
@@ -155,7 +155,7 @@ type KProxy struct {
 	Status KProxyStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:object:root=true
+// +kubebuilder:object:root=true
 
 // KProxyList contains a list of KProxy
 type KProxyList struct {
