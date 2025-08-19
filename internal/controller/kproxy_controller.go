@@ -183,6 +183,7 @@ func (r *KProxyReconciler) reconcileHeadlessService(ctx context.Context, kproxy 
 			svc.Labels[k] = v
 		}
 		svc.Spec.ClusterIP = corev1.ClusterIPNone
+		svc.Spec.PublishNotReadyAddresses = true
 		svc.Spec.Selector = selector
 		svc.Spec.Ports = []corev1.ServicePort{{
 			Name:       "http",
@@ -323,22 +324,26 @@ func (r *KProxyReconciler) countReadyEndpoints(ctx context.Context, ns string, s
 
 func defaultKProxy(px *autoscalingv1alpha1.KProxy) {
 	if px.Spec.BufferBytes == 0 {
-		px.Spec.BufferBytes = 1048576
+		px.Spec.BufferBytes = 5242880
 	}
 	if px.Spec.MaxPendingRequests == 0 {
-		px.Spec.MaxPendingRequests = 1024
+		px.Spec.MaxPendingRequests = 10000
 	}
 	if px.Spec.Retry.RetryOn == "" {
-		px.Spec.Retry.RetryOn = "5xx,connect-failure,refused-stream"
+		// Add no-healthy-upstream to handle zero-to-one scaling scenarios
+		px.Spec.Retry.RetryOn = "5xx,connect-failure,refused-stream,no-healthy-upstream"
 	}
 	if px.Spec.Retry.NumRetries == 0 {
-		px.Spec.Retry.NumRetries = 3
+		// Increase retries to keep attempting while we buffer during initial scale up
+		px.Spec.Retry.NumRetries = 100
 	}
 	if px.Spec.Retry.BaseIntervalMs == 0 {
-		px.Spec.Retry.BaseIntervalMs = 25
+		// Start with 200ms base interval
+		px.Spec.Retry.BaseIntervalMs = 200
 	}
 	if px.Spec.Retry.MaxIntervalMs == 0 {
-		px.Spec.Retry.MaxIntervalMs = 250
+		// Max interval 1000ms for reasonable retry spacing
+		px.Spec.Retry.MaxIntervalMs = 1000
 	}
 	if px.Spec.ExternalService.Port == 0 {
 		px.Spec.ExternalService.Port = 80
@@ -407,9 +412,12 @@ static_resources:
               - match: { prefix: "/" }
                 route:
                   cluster: "target"
+                  timeout: 15s
                   retry_policy:
                     retry_on: "%s"
                     num_retries: %d
+                    host_selection_retry_max_attempts: 100
+                    per_try_timeout: 1s
                     retry_back_off:
                       base_interval: "%.3fs"
                       max_interval: "%.3fs"
@@ -425,7 +433,12 @@ static_resources:
   clusters:
   - name: "target"
     type: STRICT_DNS
-    connect_timeout: 1s
+    connect_timeout: 3s
+    dns_refresh_rate: 1s
+    dns_failure_refresh_rate:
+      base_interval: 0.25s
+      max_interval: 2s
+    respect_dns_ttl: true
     lb_policy: ROUND_ROBIN
     circuit_breakers:
       thresholds:

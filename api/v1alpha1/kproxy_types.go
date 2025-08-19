@@ -28,12 +28,12 @@ type KProxySpec struct {
 
 	// BufferBytes is the maximum request body bytes Envoy will buffer per request (HTTP buffer filter).
 	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:default=1048576
+	// +kubebuilder:default=5242880
 	BufferBytes int64 `json:"bufferBytes"`
 
 	// MaxPendingRequests bounds the Envoy cluster pending queue (circuit breaker).
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=1024
+	// +kubebuilder:default=10000
 	MaxPendingRequests int32 `json:"maxPendingRequests"`
 
 	// Retry policy for upstream routing.
@@ -74,17 +74,17 @@ type KProxyTargetRef struct {
 }
 
 type KProxyRetry struct {
-	// Comma-separated retry_on conditions.
-	// +kubebuilder:default="5xx,connect-failure,refused-stream"
+	// Comma-separated retry_on conditions. Includes no-healthy-upstream for zero-to-one scaling.
+	// +kubebuilder:default="5xx,connect-failure,refused-stream,no-healthy-upstream"
 	RetryOn string `json:"retryOn,omitempty"`
-	// Number of retries.
-	// +kubebuilder:default=3
+	// Number of retries. Set higher to handle zero-to-one scaling delays.
+	// +kubebuilder:default=100
 	NumRetries int32 `json:"numRetries,omitempty"`
 	// Base backoff in milliseconds.
-	// +kubebuilder:default=25
+	// +kubebuilder:default=200
 	BaseIntervalMs int32 `json:"baseIntervalMs,omitempty"`
 	// Max backoff in milliseconds.
-	// +kubebuilder:default=250
+	// +kubebuilder:default=1000
 	MaxIntervalMs int32 `json:"maxIntervalMs,omitempty"`
 }
 

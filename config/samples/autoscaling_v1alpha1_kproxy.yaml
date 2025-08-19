@@ -9,26 +9,15 @@ metadata:
 spec:
   targetRef:
     name: web
-    namespace: default
     port: 8080
     selector:
       app: web
-  bufferBytes: 1048576
-  maxPendingRequests: 1024
-  retry:
-    retryOn: "5xx,connect-failure,refused-stream"
-    numRetries: 3
-    baseIntervalMs: 25
-    maxIntervalMs: 250
   externalService:
     name: web-kproxy
     type: ClusterIP
     port: 80
   headlessService:
-    name: web-internal
+    name: web-headless
   envoy:
-    adminPort: 9901
-    drainSeconds: 25
-    listenerPort: 8080
-    statPrefix: ingresshttp
-    disableIstioInjection: true
+    # Optional: Increase drain time for graceful shutdown
+    drainSeconds: 30

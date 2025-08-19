@@ -42,7 +42,7 @@ spec:
             description: KProxySpec defines the desired state of KProxy
             properties:
               bufferBytes:
-                default: 1048576
+                default: 5242880
                 description: BufferBytes is the maximum request body bytes Envoy will
                   buffer per request (HTTP buffer filter).
                 format: int64
@@ -118,7 +118,7 @@ spec:
                 - name
                 type: object
               maxPendingRequests:
-                default: 1024
+                default: 10000
                 description: MaxPendingRequests bounds the Envoy cluster pending queue
                   (circuit breaker).
                 format: int32
@@ -128,23 +128,25 @@ spec:
                 description: Retry policy for upstream routing.
                 properties:
                   baseIntervalMs:
-                    default: 25
+                    default: 200
                     description: Base backoff in milliseconds.
                     format: int32
                     type: integer
                   maxIntervalMs:
-                    default: 250
+                    default: 1000
                     description: Max backoff in milliseconds.
                     format: int32
                     type: integer
                   numRetries:
-                    default: 3
-                    description: Number of retries.
+                    default: 100
+                    description: Number of retries. Set higher to handle zero-to-one
+                      scaling delays.
                     format: int32
                     type: integer
                   retryOn:
-                    default: 5xx,connect-failure,refused-stream
-                    description: Comma-separated retry_on conditions.
+                    default: 5xx,connect-failure,refused-stream,no-healthy-upstream
+                    description: Comma-separated retry_on conditions. Includes no-healthy-upstream
+                      for zero-to-one scaling.
                     type: string
                 type: object
               targetRef:
