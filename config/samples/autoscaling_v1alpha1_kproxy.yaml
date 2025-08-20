@@ -16,8 +16,8 @@ spec:
     name: web-kproxy
     type: ClusterIP
     port: 80
-  headlessService:
-    name: web-headless
+  internalService:
+    name: web-internal
   envoy:
     # Optional: Increase drain time for graceful shutdown
     drainSeconds: 30

@@ -44,9 +44,9 @@ type KProxySpec struct {
 	// +kubebuilder:validation:Required
 	ExternalService KProxyExternalService `json:"externalService"`
 
-	// HeadlessService name for direct-to-pod discovery of the target.
+	// InternalService name for direct-to-pod discovery of the target.
 	// +kubebuilder:validation:Required
-	HeadlessService KProxyHeadlessService `json:"headlessService"`
+	InternalService KProxyInternalService `json:"internalService"`
 
 	// Envoy runtime settings.
 	// +kubebuilder:validation:Optional
@@ -67,7 +67,7 @@ type KProxyTargetRef struct {
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
 
-	// Selector allows overriding or supplementing the target's matchLabels (used for the headless Service).
+	// Selector allows overriding or supplementing the target's matchLabels (used for the internal Service).
 	// If empty, the operator reads .spec.selector.matchLabels from the Deployment.
 	// +kubebuilder:validation:Optional
 	Selector map[string]string `json:"selector,omitempty"`
@@ -75,7 +75,7 @@ type KProxyTargetRef struct {
 
 type KProxyRetry struct {
 	// Comma-separated retry_on conditions. Includes no-healthy-upstream for zero-to-one scaling.
-	// +kubebuilder:default="5xx,connect-failure,refused-stream,no-healthy-upstream"
+	// +kubebuilder:default="5xx,connect-failure,refused-stream,retriable-status-codes"
 	RetryOn string `json:"retryOn,omitempty"`
 	// Number of retries. Set higher to handle zero-to-one scaling delays.
 	// +kubebuilder:default=100
@@ -103,8 +103,8 @@ type KProxyExternalService struct {
 	Port int32 `json:"port,omitempty"`
 }
 
-type KProxyHeadlessService struct {
-	// Name of the headless Service selecting target pods.
+type KProxyInternalService struct {
+	// Name of the internal Service selecting target pods.
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 }

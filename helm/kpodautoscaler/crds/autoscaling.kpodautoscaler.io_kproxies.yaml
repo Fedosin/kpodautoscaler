@@ -106,12 +106,12 @@ spec:
                 required:
                 - name
                 type: object
-              headlessService:
-                description: HeadlessService name for direct-to-pod discovery of the
+              internalService:
+                description: InternalService name for direct-to-pod discovery of the
                   target.
                 properties:
                   name:
-                    description: Name of the headless Service selecting target pods.
+                    description: Name of the internal Service selecting target pods.
                     minLength: 1
                     type: string
                 required:
@@ -144,7 +144,7 @@ spec:
                     format: int32
                     type: integer
                   retryOn:
-                    default: 5xx,connect-failure,refused-stream,no-healthy-upstream
+                    default: 5xx,connect-failure,refused-stream,retriable-status-codes
                     description: Comma-separated retry_on conditions. Includes no-healthy-upstream
                       for zero-to-one scaling.
                     type: string
@@ -172,7 +172,7 @@ spec:
                     additionalProperties:
                       type: string
                     description: |-
-                      Selector allows overriding or supplementing the target's matchLabels (used for the headless Service).
+                      Selector allows overriding or supplementing the target's matchLabels (used for the internal Service).
                       If empty, the operator reads .spec.selector.matchLabels from the Deployment.
                     type: object
                 required:
@@ -182,7 +182,7 @@ spec:
             required:
             - bufferBytes
             - externalService
-            - headlessService
+            - internalService
             - maxPendingRequests
             - targetRef
             type: object

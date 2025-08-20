@@ -92,7 +92,7 @@ func (r *KProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, client.IgnoreNotFound(err)
 	}
 
-	// Compute selector for headless service
+	// Compute selector for internal service
 	selector := map[string]string{}
 	if len(kproxy.Spec.TargetRef.Selector) > 0 {
 		for k, v := range kproxy.Spec.TargetRef.Selector {
@@ -114,14 +114,14 @@ func (r *KProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		logger.Error(err, "countReadyEndpoints failed")
 	}
 
-	// Ensure headless service
-	headlessName := kproxy.Spec.HeadlessService.Name
-	if err := r.reconcileHeadlessService(ctx, &kproxy, headlessName, targetNS, selector, kproxy.Spec.TargetRef.Port); err != nil {
+	// Ensure internal service
+	internalName := kproxy.Spec.InternalService.Name
+	if err := r.reconcileInternalService(ctx, &kproxy, internalName, targetNS, selector, kproxy.Spec.TargetRef.Port); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Build Envoy config
-	fqdn := fmt.Sprintf("%s.%s.svc.cluster.local", headlessName, targetNS)
+	fqdn := fmt.Sprintf("%s.%s.svc.cluster.local", internalName, targetNS)
 	envoyYAML := buildEnvoyYAML(kproxy.Spec, fqdn)
 
 	// Config hash
@@ -170,7 +170,7 @@ func (r *KProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
-func (r *KProxyReconciler) reconcileHeadlessService(ctx context.Context, kproxy *autoscalingv1alpha1.KProxy, name, ns string, selector map[string]string, port int32) error {
+func (r *KProxyReconciler) reconcileInternalService(ctx context.Context, kproxy *autoscalingv1alpha1.KProxy, name, ns string, selector map[string]string, port int32) error {
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
 		if svc.Labels == nil {
@@ -178,11 +178,11 @@ func (r *KProxyReconciler) reconcileHeadlessService(ctx context.Context, kproxy 
 		}
 		for k, v := range labels.Set(map[string]string{
 			"kproxy.kpodautoscaler.io/owner": kproxy.Name,
-			"kproxy.kpodautoscaler.io/type":  "headless",
+			"kproxy.kpodautoscaler.io/type":  "internal",
 		}) {
 			svc.Labels[k] = v
 		}
-		svc.Spec.ClusterIP = corev1.ClusterIPNone
+		svc.Spec.Type = corev1.ServiceTypeClusterIP
 		svc.Spec.PublishNotReadyAddresses = true
 		svc.Spec.Selector = selector
 		svc.Spec.Ports = []corev1.ServicePort{{
@@ -331,7 +331,7 @@ func defaultKProxy(px *autoscalingv1alpha1.KProxy) {
 	}
 	if px.Spec.Retry.RetryOn == "" {
 		// Add no-healthy-upstream to handle zero-to-one scaling scenarios
-		px.Spec.Retry.RetryOn = "5xx,connect-failure,refused-stream,no-healthy-upstream"
+		px.Spec.Retry.RetryOn = "5xx,connect-failure,refused-stream,retriable-status-codes"
 	}
 	if px.Spec.Retry.NumRetries == 0 {
 		// Increase retries to keep attempting while we buffer during initial scale up
@@ -384,13 +384,13 @@ func effectiveEnvoy(e autoscalingv1alpha1.KProxyEnvoy) envoyEffective {
 	}
 }
 
-func buildEnvoyYAML(spec autoscalingv1alpha1.KProxySpec, headlessFQDN string) string {
+func buildEnvoyYAML(spec autoscalingv1alpha1.KProxySpec, internalFQDN string) string {
 	env := effectiveEnvoy(spec.Envoy)
 	// Convert milliseconds to seconds for Envoy duration format
 	baseIntervalSec := float64(spec.Retry.BaseIntervalMs) / 1000.0
 	maxIntervalSec := float64(spec.Retry.MaxIntervalMs) / 1000.0
 
-	// STRICT_DNS pointing to headless service; buffer + router with retries; circuit breakers.
+	// STRICT_DNS pointing to internal service; buffer + router with retries; circuit breakers.
 	y := fmt.Sprintf(`
 static_resources:
   listeners:
@@ -432,7 +432,7 @@ static_resources:
 
   clusters:
   - name: "target"
-    type: STRICT_DNS
+    type: LOGICAL_DNS
     connect_timeout: 3s
     dns_refresh_rate: 1s
     dns_failure_refresh_rate:
@@ -459,7 +459,7 @@ admin:
     socket_address: { address: 0.0.0.0, port_value: %d }
 `, env.ListenerPort, env.StatPrefix,
 		spec.Retry.RetryOn, spec.Retry.NumRetries, baseIntervalSec, maxIntervalSec,
-		spec.BufferBytes, spec.MaxPendingRequests, headlessFQDN, spec.TargetRef.Port, env.AdminPort)
+		spec.BufferBytes, spec.MaxPendingRequests, internalFQDN, spec.TargetRef.Port, env.AdminPort)
 
 	// Trim leading spaces uniformly
 	lines := strings.Split(y, "\n")
